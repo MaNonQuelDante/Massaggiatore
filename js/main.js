@@ -1,5 +1,5 @@
 /* ================================================================================
-   TESTmess v2.5.34 - HOTFIX ORARIO/GIORNO NaN
+   TESTmess v2.5.36 - Nuovo messaggio "Conferma lettura documento"
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -470,7 +470,7 @@ async function updatePreview() {
     
     // 🆕 FORMATO ORARIO SPECIALE per Memo del Giorno
     let HH = orario;
-    if (tipoMessaggio === 'memo_giorno') {
+    if (tipoMessaggio === 'memo_giorno' || tipoMessaggio === 'conferma_lettura') {
         // Formato speciale: 15:00 → "15", 15:30 → "15.30"
         if (orario.includes(':')) {
             const [h, m] = orario.split(':');
@@ -1163,6 +1163,12 @@ async function loadTemplates() {
                 nome: 'Dolce Paranoia',
                 categoria: 'Promemoria',
                 testo: '{BB} {NN}, ti confermo per {GG} alle {HH}. Dammi riscontro, grazie'
+            },
+            {
+                id: 'conferma_lettura',
+                nome: 'Conferma lettura documento',
+                categoria: 'Promemoria',
+                testo: '{BB} {NN}, ti confermo che per le {HH} siam collegati, a dopo. Hai avuto modo di leggere il documento?'
             }
         ];
         templates = defaultTemplates;

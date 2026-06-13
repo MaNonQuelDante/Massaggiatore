@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.3',
-    fullName: 'v2.5.3 by Dante',
+    version: '2.5.36',
+    fullName: 'v2.5.36 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-01-21 - Dolce Paranoia: promemoria intelligenti per lead che potrebbero dimenticarsi'
+    lastUpdate: '2026-06-13 - Nuovo messaggio "Conferma lettura documento" + allineamento versione'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
