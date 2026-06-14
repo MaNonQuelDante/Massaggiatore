@@ -1,5 +1,5 @@
 /* ================================================================================
-   TESTmess v2.5.37 - Blocco indicizzazione motori di ricerca (hosting GitHub Pages)
+   TESTmess v2.5.38 - Nuovo messaggio "Riscontro"
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -1169,6 +1169,12 @@ async function loadTemplates() {
                 nome: 'Conferma lettura documento',
                 categoria: 'Promemoria',
                 testo: '{BB} {NN}, ti confermo che per le {HH} siam collegati, a dopo. Hai avuto modo di leggere il documento?'
+            },
+            {
+                id: 'riscontro',
+                nome: 'Riscontro',
+                categoria: 'Promemoria',
+                testo: '{BB} {NN}. Cortesemente, puoi darmi riscontro?'
             }
         ];
         templates = defaultTemplates;
