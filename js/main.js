@@ -1,5 +1,5 @@
 /* ================================================================================
-   TESTmess v2.5.36 - Nuovo messaggio "Conferma lettura documento"
+   TESTmess v2.5.37 - Blocco indicizzazione motori di ricerca (hosting GitHub Pages)
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====

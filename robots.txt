@@ -1,0 +1,4 @@
+# Sito privato: accesso solo tramite link diretto.
+# Blocco totale all'indicizzazione da parte dei motori di ricerca.
+User-agent: *
+Disallow: /
