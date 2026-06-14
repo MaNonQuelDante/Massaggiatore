@@ -9,8 +9,14 @@
     <!-- PRIVACY: blocco indicizzazione motori di ricerca (sito accessibile solo via link) -->
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
     <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
-    <title>Stock Gain Messenger - v2.5.40 by Dante</title>
-    <link rel="stylesheet" href="css/style.css?v=2.5.40">
+    <title>Stock Gain Messenger - v2.5.41 by Dante</title>
+
+    <!-- Favicon e icone app (logo: mani in massaggio + sorriso, teal #128C7E) -->
+    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+
+    <link rel="stylesheet" href="css/style.css?v=2.5.41">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -48,6 +54,9 @@
             <a href="#" class="sidebar-link" data-page="cronologia">
                 <i class="fas fa-history"></i> Cronologia
             </a>
+            <a href="#" class="sidebar-link" data-page="lead">
+                <i class="fas fa-user-tag"></i> Lead
+            </a>
             <a href="#" class="sidebar-link" data-page="rubrica">
                 <i class="fas fa-address-book"></i> Rubrica
             </a>
@@ -65,10 +74,13 @@
         <!-- HEADER -->
         <header class="header">
             <div class="header-content">
+                <!-- Logo app -->
+                <img src="assets/logo.svg" alt="Stock Gain Messenger" class="header-logo">
+
                 <!-- Titolo e Nome Operatore -->
                 <div class="header-text">
                     <h1 class="header-title">Stock Gain Messenger</h1>
-                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.40 by Dante">v2.5.40 by Dante</p>
+                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.41 by Dante">v2.5.41 by Dante</p>
                 </div>
                 
                 <!-- WhatsApp Icon -->
@@ -518,6 +530,23 @@
         </div>
 
         <!-- ========================================
+             PAGINA LEAD (storico per lead)
+        ======================================== -->
+        <div id="leadContent" class="page-content" style="display: none;">
+            <div class="card">
+                <div class="card-title">
+                    <i class="fas fa-user-tag"></i> Lead - Storico Messaggi
+                </div>
+                <p style="margin-bottom: 20px; color: var(--gray-600);">
+                    Storico completo, lead per lead, di tutti i messaggi inviati (primo messaggio, riconferma, ecc.) con data e orario.
+                </p>
+                <div id="leadList" class="cronologia-list">
+                    <p class="placeholder-text">Caricamento...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========================================
              PAGINA RUBRICA
         ======================================== -->
         <div id="rubricaContent" class="page-content" style="display: none;">
@@ -682,7 +711,7 @@
     <script src="js/templates.js?v=2.5.29"></script>
     <script src="js/rubrica.js?v=2.5.29"></script>
     <script src="js/github-auto-push.js?v=2.5.29"></script>
-    <script src="js/main.js?v=2.5.29"></script>
+    <script src="js/main.js?v=2.5.41"></script>
     
     <!-- Google API Initialization -->
     <script>

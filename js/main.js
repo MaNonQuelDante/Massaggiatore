@@ -1,5 +1,5 @@
 /* ================================================================================
-   TESTmess v2.5.40 - Filtro calendario HOME multi-select a checkbox
+   TESTmess v2.5.41 - Nuova sezione Lead: storico messaggi per lead
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -138,6 +138,7 @@ async function showPage(page) {
         'calendario': 'calendarioContent',
         'messaggi': 'messaggiContent',
         'cronologia': 'cronologiaContent',
+        'lead': 'leadContent',
         'rubrica': 'rubricaContent',
         'importante': 'importanteContent'
     };
@@ -155,6 +156,7 @@ async function showPage(page) {
         
         // Carica contenuto specifico
         if (page === 'cronologia') await loadCronologia();
+        if (page === 'lead') await loadLeadSection();
         if (page === 'messaggi') loadMessaggiList();
         if (page === 'calendario' && window.displayCalendarView) displayCalendarView();
         if (page === 'rubrica' && window.renderRubricaList) window.renderRubricaList();
@@ -1093,6 +1095,125 @@ async function loadCronologia() {
         `;
     });
     
+    listContainer.innerHTML = html;
+}
+
+// ===== SEZIONE LEAD (vista aggregata della cronologia, raggruppata per lead) =====
+async function loadLeadSection() {
+    const listContainer = document.getElementById('leadList');
+    if (!listContainer) return;
+
+    // Non loggato: nessun accesso a Drive
+    if (!window.accessToken) {
+        listContainer.innerHTML = '<p class="placeholder-text">⚠️ Connetti Google per vedere lo storico dei lead</p>';
+        return;
+    }
+
+    listContainer.innerHTML = '<p class="placeholder-text">Caricamento...</p>';
+
+    // Carica cronologia da Drive (con fallback localStorage, come fa saveToCronologia)
+    let cronologia = [];
+    if (window.DriveStorage) {
+        try {
+            const driveData = await window.DriveStorage.load(STORAGE_KEYS.CRONOLOGIA);
+            if (driveData) cronologia = driveData;
+        } catch (error) {
+            console.error('❌ Errore caricamento cronologia (Lead):', error);
+        }
+    }
+    if (cronologia.length === 0) {
+        const localData = localStorage.getItem(STORAGE_KEYS.CRONOLOGIA);
+        if (localData) {
+            try { cronologia = JSON.parse(localData); } catch (e) { /* ignora JSON rotto */ }
+        }
+    }
+
+    if (cronologia.length === 0) {
+        listContainer.innerHTML = '<p class="placeholder-text">Nessun lead contattato ancora...</p>';
+        return;
+    }
+
+    // Raggruppa per lead: chiave = telefono (solo cifre) se presente, altrimenti nome+cognome
+    const leadsMap = {};
+    cronologia.forEach(entry => {
+        const telDigits = (entry.telefono || '').replace(/\D/g, '');
+        const key = telDigits
+            ? 'tel:' + telDigits
+            : 'nome:' + ((entry.nome || '') + '|' + (entry.cognome || '')).toLowerCase().trim();
+        if (!leadsMap[key]) {
+            leadsMap[key] = { nome: '', cognome: '', telefono: '', messaggi: [] };
+        }
+        const lead = leadsMap[key];
+        // Tieni i dati anagrafici quando disponibili
+        if (entry.nome) lead.nome = entry.nome;
+        if (entry.cognome) lead.cognome = entry.cognome;
+        if (entry.telefono) lead.telefono = entry.telefono;
+        lead.messaggi.push(entry);
+    });
+
+    // Ordina: messaggi dal più vecchio al più recente; ultimo contatto per ordinare i lead
+    const leads = Object.values(leadsMap);
+    leads.forEach(lead => {
+        lead.messaggi.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        const ultimo = lead.messaggi[lead.messaggi.length - 1];
+        lead.ultimoContatto = ultimo ? new Date(ultimo.timestamp).getTime() : 0;
+    });
+    // Lead dal contatto più recente al più vecchio
+    leads.sort((a, b) => b.ultimoContatto - a.ultimoContatto);
+
+    // Etichette leggibili per i tipi messaggio (id template); fallback per tipi sconosciuti
+    const tipoLabels = {
+        'primo_messaggio': '💬 Primo messaggio',
+        'memo_giorno': '📝 Memo del giorno',
+        'dolce_paranoia': '🔔 Dolce paranoia',
+        'conferma_lettura': '📄 Conferma lettura',
+        'riscontro': '↩️ Riscontro',
+        'riconferma': '✅ Riconferma'
+    };
+    const tipoLabel = (tipo) => {
+        if (!tipo) return '💬 Primo messaggio'; // retrocompat: entry senza tipo
+        if (tipoLabels[tipo]) return tipoLabels[tipo];
+        return tipo.charAt(0).toUpperCase() + tipo.slice(1).replace(/_/g, ' ');
+    };
+
+    let html = '';
+    leads.forEach(lead => {
+        const nomeCompleto = (`${lead.nome} ${lead.cognome || ''}`).trim() || 'Lead senza nome';
+        const telefono = lead.telefono || '—';
+        const count = lead.messaggi.length;
+
+        let azioniHtml = '';
+        lead.messaggi.forEach(msg => {
+            const d = new Date(msg.timestamp);
+            const dateStr = d.toLocaleDateString('it-IT');
+            const timeStr = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            const servizio = msg.servizio ? ` · <i class="fas fa-briefcase"></i> ${msg.servizio}` : '';
+            const societa = msg.societa ? ` · <i class="fas fa-building"></i> ${msg.societa}` : '';
+            azioniHtml += `
+                <div class="lead-azione">
+                    <span class="lead-tipo-badge">${tipoLabel(msg.tipoMessaggio)}</span>
+                    <span class="lead-azione-meta">
+                        <i class="fas fa-clock"></i> ${dateStr} ${timeStr}${servizio}${societa}
+                    </span>
+                </div>
+            `;
+        });
+
+        html += `
+            <div class="cronologia-item">
+                <div class="cronologia-header">
+                    <strong>${nomeCompleto}</strong>
+                    <span style="font-size: 13px; color: var(--gray-500);">
+                        <i class="fas fa-phone"></i> ${telefono} · ${count} ${count === 1 ? 'azione' : 'azioni'}
+                    </span>
+                </div>
+                <div class="lead-azioni">
+                    ${azioniHtml}
+                </div>
+            </div>
+        `;
+    });
+
     listContainer.innerHTML = html;
 }
 

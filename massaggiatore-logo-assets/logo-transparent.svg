@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Stock Gain Messenger logo (transparent)">
+  <title>Stock Gain Messenger</title>
+  <!-- Versione vettoriale a sfondo trasparente: mani bianche + sorriso.
+       Pensata per sfondi scuri/teal. Per sfondi chiari usare logo.svg (con quadrato teal). -->
+  <defs>
+    <g id="hand" fill="#ffffff">
+      <!-- polso / manica -->
+      <rect x="-32" y="40" width="64" height="78" rx="26"/>
+      <!-- palmo -->
+      <rect x="-46" y="-28" width="92" height="86" rx="40"/>
+      <!-- 4 dita che si aprono a ventaglio -->
+      <rect x="-15" y="-150" width="30" height="135" rx="15" transform="rotate(-27)"/>
+      <rect x="-15" y="-170" width="30" height="150" rx="15" transform="rotate(-9)"/>
+      <rect x="-15" y="-172" width="30" height="152" rx="15" transform="rotate(9)"/>
+      <rect x="-15" y="-150" width="30" height="130" rx="15" transform="rotate(27)"/>
+      <!-- pollice -->
+      <rect x="-14" y="-78" width="28" height="86" rx="14" transform="translate(-44,28) rotate(-62)"/>
+    </g>
+  </defs>
+
+  <!-- sorriso -->
+  <path d="M150 362 Q256 424 362 362" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="16" stroke-linecap="round"/>
+
+  <!-- due mani che formano una V verso l'alto -->
+  <use href="#hand" transform="translate(212,250) rotate(-14)"/>
+  <use href="#hand" transform="translate(300,250) rotate(14) scale(-1,1)"/>
+</svg>
