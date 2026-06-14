@@ -39,7 +39,8 @@ const STORAGE_KEYS_CALENDAR = {
     CONTACTED_LEADS: 'sgmess_contacted_leads', // Lead a cui abbiamo già mandato messaggi
     LOADED_DAYS_BACK: 'sgmess_loaded_days_back', // Quanti giorni indietro abbiamo caricato
     SELECTED_CALENDARS: 'sgmess_selected_calendars', // Calendari selezionati per il filtro (sezione calendario)
-    HOME_CALENDAR_FILTER: 'sgmess_home_calendar_filter', // Calendario selezionato nella home
+    HOME_CALENDAR_FILTER: 'sgmess_home_calendar_filter', // (legacy) Calendario singolo selezionato nella home
+    HOME_SELECTED_CALENDARS: 'sgmess_home_selected_calendars', // v2.5.40: Calendari spuntati nella home (multi-select, chiave separata da quella della pagina Calendario)
     AVAILABLE_CALENDARS: 'sgmess_available_calendars' // Lista calendari disponibili (v2.5.7)
 };
 
@@ -453,36 +454,94 @@ function getFilteredEventsByCalendar() {
     });
 }
 
-// ===== POPOLA DROPDOWN CALENDARIO NELLA HOME =====
+// ===== POPOLA CHECKBOX CALENDARI NELLA HOME (v2.5.40: multi-select) =====
 function populateHomeCalendarDropdown(calendars) {
-    const dropdown = document.getElementById('selectCalendarFilter');
-    if (!dropdown) return;
-    
-    // Carica selezione salvata
-    const savedCalendar = localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_CALENDAR_FILTER) || 'all';
-    
-    // Reset dropdown
-    dropdown.innerHTML = '<option value="all">-- Tutti i Calendari --</option>';
-    
-    // Aggiungi opzione per ogni calendario
+    const container = document.getElementById('homeCalendarFilterCheckboxes');
+    if (!container) return;
+
+    // Carica selezione salvata (chiave dedicata HOME, separata dalla pagina Calendario)
+    let selected = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS) || 'null');
+    // Prima volta: tutti selezionati di default
+    if (!Array.isArray(selected)) {
+        selected = calendars.map(c => c.id);
+        localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(selected));
+    }
+
+    const allChecked = calendars.length > 0 && calendars.every(c => selected.includes(c.id));
+
+    // HTML: master "Tutti i Calendari" + una checkbox per calendario (stile pagina Calendario)
+    let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+    html += `
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; border-bottom: 1px solid var(--gray-200, #e5e7eb); padding-bottom: 6px;">
+            <input type="checkbox" id="homeCalAllCheckbox" ${allChecked ? 'checked' : ''} style="cursor: pointer;">
+            <span style="color: var(--gray-800, #1f2937);">Tutti i Calendari</span>
+        </label>
+    `;
     calendars.forEach(calendar => {
-        const option = document.createElement('option');
-        option.value = calendar.id;
-        option.textContent = calendar.summary;
-        if (calendar.id === savedCalendar) {
-            option.selected = true;
-        }
-        dropdown.appendChild(option);
+        const isChecked = selected.includes(calendar.id);
+        html += `
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" class="home-calendar-checkbox" data-calendar-id="${calendar.id}" ${isChecked ? 'checked' : ''} style="cursor: pointer;">
+                <span style="color: var(--gray-700, #374151);">${calendar.summary}</span>
+            </label>
+        `;
     });
-    
-    console.log(`✅ Dropdown home popolato con ${calendars.length} calendari`);
+    html += '</div>';
+    container.innerHTML = html;
+
+    // Aggiorna subito la lista appuntamenti/tendina lead della home
+    async function applyHomeCalendarChange() {
+        const selectDay = document.getElementById('selectDay');
+        if (selectDay && selectDay.value && window.updateLeadSelectorByDate) {
+            await window.updateLeadSelectorByDate(selectDay.value);
+        }
+    }
+
+    // Listener: checkbox singola calendario
+    container.querySelectorAll('.home-calendar-checkbox').forEach(cb => {
+        cb.addEventListener('change', async function() {
+            let sel = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS) || '[]');
+            const id = this.dataset.calendarId;
+            if (this.checked) {
+                if (!sel.includes(id)) sel.push(id);
+            } else {
+                sel = sel.filter(x => x !== id);
+            }
+            localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(sel));
+            // Aggiorna stato del master "Tutti"
+            const allCb = document.getElementById('homeCalAllCheckbox');
+            if (allCb) allCb.checked = calendars.length > 0 && calendars.every(c => sel.includes(c.id));
+            await applyHomeCalendarChange();
+            console.log('📅 [HOME] Calendari spuntati:', sel.length);
+        });
+    });
+
+    // Listener: master "Tutti i Calendari" (spunta/deseleziona tutti)
+    const allCb = document.getElementById('homeCalAllCheckbox');
+    if (allCb) {
+        allCb.addEventListener('change', async function() {
+            const sel = this.checked ? calendars.map(c => c.id) : [];
+            localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(sel));
+            container.querySelectorAll('.home-calendar-checkbox').forEach(cb => { cb.checked = this.checked; });
+            await applyHomeCalendarChange();
+            console.log('📅 [HOME] Tutti i calendari:', this.checked ? 'ON' : 'OFF');
+        });
+    }
+
+    console.log(`✅ Checkbox calendari home popolate (${calendars.length} calendari)`);
 }
 
-// ===== GET CALENDARIO SELEZIONATO NELLA HOME =====
+// ===== GET CALENDARI SELEZIONATI NELLA HOME (v2.5.40: multi-select) =====
+// Ritorna un array di id selezionati. null = mai impostato => mostra tutti.
 function getHomeSelectedCalendar() {
-    const dropdown = document.getElementById('selectCalendarFilter');
-    if (!dropdown) return 'all';
-    return dropdown.value || 'all';
+    const json = localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS);
+    if (json === null) return null;
+    try {
+        const arr = JSON.parse(json);
+        return Array.isArray(arr) ? arr : null;
+    } catch (e) {
+        return null;
+    }
 }
 
 function loadSavedEvents() {
@@ -580,18 +639,18 @@ async function updateLeadSelectorByDate(dateString) {
         contactedLeads = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.CONTACTED_LEADS) || '[]');
     }
     
-    // Ottieni calendario selezionato nella home
+    // Ottieni calendari selezionati nella home (v2.5.40: multi-select; null = tutti)
     const homeCalendarFilter = getHomeSelectedCalendar();
-    
-    // Filtra eventi per la data selezionata + escludi "X" + filtra per calendario home
+
+    // Filtra eventi per la data selezionata + escludi "X" + filtra per calendari home spuntati
     const dayEvents = allEvents.filter(event => {
         const eventDate = new Date(event.start);
         const isCorrectDate = eventDate.toDateString() === selectedDate.toDateString();
         const isNotX = !shouldSkipEvent(event);
-        
-        // Filtra per calendario home (se non è "all")
-        const isSelectedCalendar = homeCalendarFilter === 'all' || event.calendarId === homeCalendarFilter;
-        
+
+        // null = tutti i calendari; array = solo quelli spuntati; [] = nessuno
+        const isSelectedCalendar = homeCalendarFilter === null || homeCalendarFilter.includes(event.calendarId);
+
         return isCorrectDate && isNotX && isSelectedCalendar;
     });
     
@@ -1547,27 +1606,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Cambio calendario nella home
-    const selectCalendarFilter = document.getElementById('selectCalendarFilter');
-    if (selectCalendarFilter) {
-        selectCalendarFilter.addEventListener('change', async function() {
-            const calendarId = this.value;
-            
-            // Salva selezione in localStorage
-            localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_CALENDAR_FILTER, calendarId);
-            
-            // Ricarica lead con nuovo filtro
-            const selectDay = document.getElementById('selectDay');
-            if (selectDay && selectDay.value) {
-                await updateLeadSelectorByDate(selectDay.value);
-                
-                const calendarName = this.options[this.selectedIndex].textContent;
-                showNotification(`📅 Filtro applicato: ${calendarName}`, 'success');
-            }
-            
-            console.log('📅 Calendario home selezionato:', calendarId);
-        });
-    }
+    // v2.5.40: il filtro calendario della home è ora a checkbox multi-select.
+    // I listener (checkbox singole + master "Tutti") sono dentro populateHomeCalendarDropdown().
     
     // Cambio lead
     const selectLead = document.getElementById('selectLead');

@@ -1,5 +1,5 @@
 /* ================================================================================
-   TESTmess v2.5.39 - FIX: lead non sparisce dalla tendina dopo invia/genera messaggio
+   TESTmess v2.5.40 - Filtro calendario HOME multi-select a checkbox
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
