@@ -1,5 +1,5 @@
 /* ================================================================================
-   TESTmess v2.5.38 - Nuovo messaggio "Riscontro"
+   TESTmess v2.5.39 - FIX: lead non sparisce dalla tendina dopo invia/genera messaggio
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -1026,9 +1026,13 @@ async function markLeadAsContactedFromCalendar(nome, cognome, telefono) {
         console.log('✅ Lead marcato come contattato su Drive:', nome);
         
         // Aggiorna la lista lead dopo aver marcato come contattato
+        // FIX v2.5.39: usa updateLeadSelectorByDate (come tutto il resto del codice).
+        // selectDay.value è in formato ISO (es. "2026-06-14"); la vecchia updateLeadSelector
+        // si aspettava la data formattata all'italiana e non trovava mai gli eventi
+        // -> tendina svuotata e lead "sparito" finché non si faceva login/logout.
         const selectDay = document.getElementById('selectDay');
-        if (selectDay && selectDay.value && window.updateLeadSelector) {
-            await window.updateLeadSelector(selectDay.value);
+        if (selectDay && selectDay.value && window.updateLeadSelectorByDate) {
+            await window.updateLeadSelectorByDate(selectDay.value);
         }
     }
 }
