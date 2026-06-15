@@ -176,7 +176,18 @@ async function syncCalendarEvents(silent = false, loadMore = false) {
         
         // Salva calendari in localStorage per uso futuro (v2.5.7)
         localStorage.setItem(STORAGE_KEYS_CALENDAR.AVAILABLE_CALENDARS, JSON.stringify(targetCalendars));
-        
+
+        // v2.5.44: recupera da Drive la selezione calendari salvata (così non si perde
+        // tra sessioni/dispositivi). Se presente, sovrascrive la copia locale prima di disegnare.
+        try {
+            if (window.DriveStorage && window.accessToken) {
+                const driveSel = await window.DriveStorage.load('HOME_SELECTED_CALENDARS');
+                if (Array.isArray(driveSel)) {
+                    localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(driveSel));
+                }
+            }
+        } catch (e) { console.warn('⚠️ Drive pull selezione calendari fallito (uso locale):', e); }
+
         // Popola dropdown home con calendari
         populateHomeCalendarDropdown(targetCalendars);
         
@@ -454,6 +465,19 @@ function getFilteredEventsByCalendar() {
     });
 }
 
+// ===== SALVA SELEZIONE CALENDARI HOME (v2.5.44: localStorage + Drive + report) =====
+// Unico punto di salvataggio: scrive SEMPRE in locale (istantaneo) e prova Drive
+// (se loggato). Drive non bloccante: se fallisce resta comunque la copia locale.
+async function saveHomeSelectedCalendars(sel) {
+    localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(sel));
+    try {
+        if (window.DriveStorage && window.accessToken) {
+            await window.DriveStorage.save('HOME_SELECTED_CALENDARS', sel);
+        }
+    } catch (e) { console.warn('⚠️ Drive save selezione calendari fallito (resta in locale):', e); }
+    if (window.logActivity) window.logActivity('calendari_aggiornati', { count: sel.length });
+}
+
 // ===== POPOLA CHECKBOX CALENDARI NELLA HOME (v2.5.40: multi-select) =====
 function populateHomeCalendarDropdown(calendars) {
     const container = document.getElementById('homeCalendarFilterCheckboxes');
@@ -464,7 +488,7 @@ function populateHomeCalendarDropdown(calendars) {
     // Prima volta: tutti selezionati di default
     if (!Array.isArray(selected)) {
         selected = calendars.map(c => c.id);
-        localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(selected));
+        saveHomeSelectedCalendars(selected); // v2.5.44: salva anche su Drive
     }
 
     const allChecked = calendars.length > 0 && calendars.every(c => selected.includes(c.id));
@@ -507,7 +531,7 @@ function populateHomeCalendarDropdown(calendars) {
             } else {
                 sel = sel.filter(x => x !== id);
             }
-            localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(sel));
+            await saveHomeSelectedCalendars(sel); // v2.5.44: locale + Drive + report
             // Aggiorna stato del master "Tutti"
             const allCb = document.getElementById('homeCalAllCheckbox');
             if (allCb) allCb.checked = calendars.length > 0 && calendars.every(c => sel.includes(c.id));
@@ -521,7 +545,7 @@ function populateHomeCalendarDropdown(calendars) {
     if (allCb) {
         allCb.addEventListener('change', async function() {
             const sel = this.checked ? calendars.map(c => c.id) : [];
-            localStorage.setItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS, JSON.stringify(sel));
+            await saveHomeSelectedCalendars(sel); // v2.5.44: locale + Drive + report
             container.querySelectorAll('.home-calendar-checkbox').forEach(cb => { cb.checked = this.checked; });
             await applyHomeCalendarChange();
             console.log('📅 [HOME] Tutti i calendari:', this.checked ? 'ON' : 'OFF');
@@ -1190,6 +1214,9 @@ async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, 
         contactedLeads.push(contactedEntry);
         localStorage.setItem(STORAGE_KEYS_CALENDAR.CONTACTED_LEADS, JSON.stringify(contactedLeads));
         console.log('💾 Lead salvato in localStorage (backup primario):', nome);
+
+        // v2.5.44: report attività — traccia ogni lead contattato
+        if (window.logActivity) window.logActivity('lead_contattato', { nome: nome, cognome: cognome || '', telefono: telefono || '', eventId: eventId, date: eventDate });
         
         // 4. PROVA a salvare anche su Drive (sync cloud)
         try {

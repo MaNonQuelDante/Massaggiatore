@@ -13,7 +13,9 @@ const DRIVE_FILES = {
     TEMPLATES: 'testmess_templates.json',
     LAST_MESSAGE: 'testmess_last_message.json',
     OPERATOR_NAME: 'testmess_operator_name.json',
-    CONTACTED_LEADS: 'testmess_contacted_leads.json' // ✅ NUOVO: Lead contattati persistenti
+    CONTACTED_LEADS: 'testmess_contacted_leads.json', // ✅ NUOVO: Lead contattati persistenti
+    HOME_SELECTED_CALENDARS: 'testmess_home_selected_calendars.json', // v2.5.44: selezione calendari home (sync su Drive)
+    ACTIVITY_LOG: 'testmess_activity_log.json' // v2.5.44: report di tutte le azioni
 };
 
 let driveInited = false;
@@ -276,6 +278,29 @@ async function clearContactedLeads() {
     return true;
 }
 
+// ===== REPORT ATTIVITÀ (v2.5.44) =====
+// Registra ogni azione importante (lead contattato, messaggio, cambio calendari) in
+// un unico report salvato su Drive (+ copia in localStorage). Fire-and-forget: non
+// lancia MAI errori al chiamante, così non può rompere i flussi esistenti.
+async function logActivity(action, details) {
+    try {
+        const entry = { ts: new Date().toISOString(), action: action, details: details || {} };
+        let log = [];
+        const local = localStorage.getItem('sgmess_activity_log');
+        if (local) { try { log = JSON.parse(local); } catch (e) {} }
+        if (window.accessToken) {
+            try { const d = await loadFromDrive('ACTIVITY_LOG'); if (Array.isArray(d)) log = d; } catch (e) {}
+        }
+        log.unshift(entry);
+        if (log.length > 5000) log = log.slice(0, 5000); // tetto di sicurezza
+        localStorage.setItem('sgmess_activity_log', JSON.stringify(log));
+        if (window.accessToken) { try { await saveToDrive('ACTIVITY_LOG', log); } catch (e) {} }
+    } catch (e) {
+        console.warn('⚠️ logActivity fallito (ignorato):', e);
+    }
+}
+window.logActivity = logActivity;
+
 // ===== WRAPPER FUNZIONI PER COMPATIBILITÀ =====
 window.DriveStorage = {
     load: loadFromDrive,
@@ -283,5 +308,6 @@ window.DriveStorage = {
     migrate: migrateLocalStorageToDrive,
     getContactedLeads: getContactedLeads,
     saveContactedLead: saveContactedLead,
-    clearContactedLeads: clearContactedLeads
+    clearContactedLeads: clearContactedLeads,
+    logActivity: logActivity
 };

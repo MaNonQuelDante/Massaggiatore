@@ -1,6 +1,6 @@
 /* ================================================================================
-   TESTmess v2.5.43 - Servizio di default = Finanza Efficace / FE - Lead
-   (quando l'evento non specifica il servizio e il calendario non è riconosciuto)
+   TESTmess v2.5.44 - Default form Finanza Efficace/FE - Lead + selezione calendari
+   sincronizzata su Drive (copia locale) + report attivita unico (logActivity)
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -986,7 +986,10 @@ async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, so
     };
     
     cronologia.unshift(entry);
-    
+
+    // v2.5.44: report attività — traccia ogni messaggio salvato
+    if (window.logActivity) window.logActivity('messaggio_salvato', { nome: nome, cognome: cognome, telefono: telefono, servizio: servizio || '', societa: societa || '', tipo: tipoMessaggio || '' });
+
     // Limite 1000 messaggi
     if (cronologia.length > 1000) {
         cronologia = cronologia.slice(0, 1000);
