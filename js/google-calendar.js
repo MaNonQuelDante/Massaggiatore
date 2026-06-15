@@ -608,10 +608,17 @@ async function updateLeadSelectorByDate(dateString) {
         return;
     }
     
-    // ⏳ LOADING STATE
-    selectLead.innerHTML = '<option value="">⏳ Caricamento lead...</option>';
-    selectLead.disabled = true;
-    
+    // ⏳ LOADING STATE — v2.5.42 FIX: NON svuotare una tendina già popolata.
+    // Prima qui si faceva sempre innerHTML='⏳ Caricamento...' e POI si attendeva Drive
+    // (getContactedLeads): durante quell'await i nomi SPARIVANO dalla tendina.
+    // Ora mostriamo "Caricamento" solo al primissimo caricamento (lista ancora vuota);
+    // se la lista è già piena, la lasciamo intatta e la sostituiamo in un colpo solo alla fine.
+    const isFirstLoad = selectLead.options.length <= 1;
+    if (isFirstLoad) {
+        selectLead.innerHTML = '<option value="">⏳ Caricamento lead...</option>';
+        selectLead.disabled = true;
+    }
+
     const selectedDate = new Date(dateString + 'T00:00:00');
     
     // Carica TUTTI gli eventi salvati (non filtrati)
@@ -1158,7 +1165,7 @@ function detectGenderFromName(name) {
 }
 
 // ===== MARCA LEAD COME CONTATTATO =====
-async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate) {
+async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, calendarId) {
     const contactedEntry = {
         eventId: eventId,
         nome: nome,
@@ -1198,7 +1205,7 @@ async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate) 
         // 5. 🆕 v2.5.24: Aggiungi link WhatsApp nella descrizione evento
         // 🆕 v2.5.27: Rinomina evento con solo Nome Cognome
         try {
-            await addWhatsAppLinkToEvent(eventId, telefono, nome, cognome);
+            await addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendarId);
         } catch (error) {
             console.warn('⚠️ Non riesco ad aggiornare evento con link WhatsApp:', error.message);
         }
@@ -1217,7 +1224,7 @@ async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate) 
 // ===== v2.5.24: AGGIUNGI LINK WHATSAPP NELLA DESCRIZIONE EVENTO =====
 // ===== v2.5.27: RINOMINA EVENTO CON SOLO NOME COGNOME =====
 // ===== v2.5.31: FIX - Rename SEMPRE attivo (anche eventi già esistenti) =====
-async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome) {
+async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendarId) {
     if (!window.gapi || !window.gapi.client || !window.gapi.client.calendar) {
         console.warn('⚠️ Google Calendar API non inizializzata');
         return;
@@ -1239,9 +1246,12 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome) {
         const whatsappLink = `https://wa.me/${phoneClean}`;
         
         // 1. Ottieni evento corrente
-        const calendarId = 'primary'; // Assumiamo calendario primario
+        // v2.5.42 FIX: usa il calendario reale dell'evento (era hardcoded 'primary',
+        // quindi su calendari SG non-primary la get/patch falliva con 404 e il rename +
+        // link WhatsApp non venivano mai applicati).
+        const calId = calendarId || 'primary';
         const event = await window.gapi.client.calendar.events.get({
-            calendarId: calendarId,
+            calendarId: calId,
             eventId: eventId
         });
         
@@ -1274,11 +1284,11 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome) {
         // 5. Aggiorna evento solo se necessario
         if (Object.keys(updates).length > 0) {
             await window.gapi.client.calendar.events.patch({
-                calendarId: calendarId,
+                calendarId: calId,
                 eventId: eventId,
                 resource: updates
             });
-            
+
             console.log('✅ Evento Google Calendar aggiornato:', updates);
         } else {
             console.log('ℹ️ Evento già aggiornato, nessuna modifica necessaria');

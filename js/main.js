@@ -1,5 +1,6 @@
 /* ================================================================================
-   TESTmess v2.5.41 - Nuova sezione Lead: storico messaggi per lead
+   TESTmess v2.5.42 - FIX: i lead non spariscono più dalla tendina dopo invia/genera
+   (no svuotamento tendina durante load Drive + race del "marca contattato" risolta)
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -527,23 +528,26 @@ async function generateMessage(e) {
     document.getElementById('outputCard').style.display = 'block';
     
     // Salva in cronologia (v2.2.27: con servizio e società)
-    saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa);
-    
+    // v2.5.42 FIX: AWAIT — internamente marca il lead come contattato leggendo il
+    // <select> ancora selezionato. Senza await, resetForm() più sotto azzerava la
+    // selezione PRIMA che il mark leggesse l'eventId → lead mai segnato ✅.
+    await saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa);
+
     // Salva ultimo messaggio
     saveLastMessage(nome, cognome, telefono);
-    
+
     // Salva in Google Contacts (v2.5.32: anche senza cognome)
     if (window.saveContactToGoogle && nome && telefono) {
         checkAndSaveContact(nome, cognome, telefono, societa);
     }
-    
+
     // Copia automaticamente
     navigator.clipboard.writeText(messaggio).then(() => {
         showNotification('Messaggio generato e copiato!', 'success');
     });
-    
-    // Reset form
-    resetForm();
+
+    // Reset form (v2.5.42: await, così il refresh tendina è sequenziale e non concorrente)
+    await resetForm();
 }
 
 // ===== INVIA SU WHATSAPP =====
@@ -574,23 +578,25 @@ async function sendToWhatsApp() {
         telefono = '39' + telefono;
     }
     
+    // v2.5.42 FIX: apri WhatsApp SUBITO, mentre siamo ancora nel gesto-utente del click.
+    // (Se aprissimo dopo gli await qui sotto, il popup blocker bloccherebbe la finestra.)
+    const whatsappUrl = `https://wa.me/${telefono}?text=${encodeURIComponent(messaggio)}`;
+    window.open(whatsappUrl, '_blank');
+    showNotification('Apertura WhatsApp...', 'success');
+
     // Salva in cronologia (v2.2.27: con servizio e società)
-    saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa);
+    // v2.5.42 FIX: AWAIT e PRIMA del resetForm — così il mark legge il lead ancora
+    // selezionato (eventId presente) e la tendina non si svuota in concorrenza.
+    await saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa);
     saveLastMessage(nome, cognome, telefono);
-    
+
     // Salva in Google Contacts (v2.5.32: anche senza cognome)
     if (window.saveContactToGoogle && nome && telefono) {
         checkAndSaveContact(nome, cognome, telefono, societa);
     }
-    
-    // Reset form
-    resetForm();
-    
-    // Apri WhatsApp
-    const whatsappUrl = `https://wa.me/${telefono}?text=${encodeURIComponent(messaggio)}`;
-    window.open(whatsappUrl, '_blank');
-    
-    showNotification('Apertura WhatsApp...', 'success');
+
+    // Reset form (per ultimo: la selezione è già stata usata dal mark)
+    await resetForm();
 }
 
 // ===== CHECK E SALVA CONTATTO =====
@@ -1005,7 +1011,9 @@ async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, so
     }
     
     // Marca lead come contattato
-    markLeadAsContactedFromCalendar(nome, cognome, telefono);
+    // v2.5.42 FIX: AWAIT — il chiamante (generateMessage/sendToWhatsApp) ora aspetta
+    // questa catena PRIMA di resetForm, così la selezione del lead è ancora valida.
+    await markLeadAsContactedFromCalendar(nome, cognome, telefono);
 }
 
 // ===== MARCA LEAD DA CALENDARIO COME CONTATTATO =====
@@ -1019,10 +1027,12 @@ async function markLeadAsContactedFromCalendar(nome, cognome, telefono) {
         const eventData = JSON.parse(selectedOption.dataset.eventData || '{}');
         const eventId = selectedOption.dataset.eventId;
         const eventDate = eventData.start || new Date().toISOString();
-        
+        // v2.5.42 FIX: usa il vero calendario dell'evento (gli eventi SG NON sono su 'primary').
+        const calendarId = eventData.calendarId || 'primary';
+
         // 🔥 Salva su Google Drive invece di localStorage
         if (window.markLeadAsContacted) {
-            await window.markLeadAsContacted(eventId, nome, cognome, telefono, eventDate);
+            await window.markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, calendarId);
         }
         
         console.log('✅ Lead marcato come contattato su Drive:', nome);
