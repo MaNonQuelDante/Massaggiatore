@@ -1150,11 +1150,12 @@ function extractServiceFromEvent(event) {
         };
     }
     
-    // Default: Stock Gain (se calendario non riconosciuto)
-    console.log('   ⚠️ Calendario non riconosciuto, default a Stock Gain');
+    // Default: Finanza Efficace (v2.5.43: se l'evento non specifica il servizio
+    // e il calendario non è riconosciuto, resta Finanza Efficace / FE - Lead)
+    console.log('   ⚠️ Calendario non riconosciuto, default a Finanza Efficace');
     return {
-        servizio: 'Stock Gain',
-        societa: 'SG - Lead'
+        servizio: 'Finanza Efficace',
+        societa: 'FE - Lead'
     };
 }
 

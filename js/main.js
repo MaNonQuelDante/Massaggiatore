@@ -1,6 +1,6 @@
 /* ================================================================================
-   TESTmess v2.5.42 - FIX: i lead non spariscono più dalla tendina dopo invia/genera
-   (no svuotamento tendina durante load Drive + race del "marca contattato" risolta)
+   TESTmess v2.5.43 - Servizio di default = Finanza Efficace / FE - Lead
+   (quando l'evento non specifica il servizio e il calendario non è riconosciuto)
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
