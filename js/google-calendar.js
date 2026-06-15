@@ -49,6 +49,23 @@ let isLoadingMoreEvents = false; // Flag per evitare chiamate multiple
 let availableCalendars = []; // Lista calendari disponibili
 let isFormProgrammaticUpdate = false; // v2.5.19: Flag per evitare re-trigger del listener selectDay
 
+// ===== AUTH GUARD (v2.5.45) =====
+// True se c'è una sessione Google valida: token in memoria OPPURE token salvato
+// non ancora scaduto. Il secondo caso copre il ripristino ASINCRONO all'avvio
+// (maybeEnableButtons → restoreTokenFromStorage gira dopo il DOMContentLoaded),
+// così un utente GIÀ loggato vede subito i calendari senza un lampeggio del
+// "lucchetto"; un utente NON loggato (o con token scaduto) non vede nulla.
+function isGoogleAuthenticated() {
+    if (window.accessToken) return true;
+    try {
+        const t = localStorage.getItem('google_access_token');
+        const exp = parseInt(localStorage.getItem('google_token_expires_at') || '0', 10);
+        return !!(t && Date.now() < exp);
+    } catch (e) {
+        return false;
+    }
+}
+
 // ===== INIT CALENDAR SYNC =====
 function initCalendarSync() {
     // Carica eventi salvati all'avvio
@@ -482,6 +499,13 @@ async function saveHomeSelectedCalendars(sel) {
 function populateHomeCalendarDropdown(calendars) {
     const container = document.getElementById('homeCalendarFilterCheckboxes');
     if (!container) return;
+
+    // 🔒 v2.5.45 PRIVACY: senza login Google NON mostrare i nomi dei calendari.
+    // Prima i nomi (letti dalla cache localStorage) comparivano anche da sloggati.
+    if (!isGoogleAuthenticated()) {
+        container.innerHTML = '<p style="color: var(--gray-500, #6b7280); font-size: 0.9rem; margin: 0;">🔒 Effettua il login Google per vedere i tuoi calendari</p>';
+        return;
+    }
 
     // Carica selezione salvata (chiave dedicata HOME, separata dalla pagina Calendario)
     let selected = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS) || 'null');
@@ -1455,7 +1479,14 @@ async function ensureEventTitleCorrect(event) {
 async function displayCalendarView() {
     const calendarView = document.getElementById('calendarView');
     if (!calendarView) return;
-    
+
+    // 🔒 v2.5.45 PRIVACY: senza login NON mostrare gli eventi (titoli = nomi clienti)
+    // letti dalla cache. Da sloggati la pagina Calendario resta vuota.
+    if (!isGoogleAuthenticated()) {
+        calendarView.innerHTML = '<p class="placeholder-text">🔒 Effettua il login Google per vedere il calendario</p>';
+        return;
+    }
+
     // USA EVENTI FILTRATI (escludi "X" + filtra per calendario)
     const events = getFilteredEventsByCalendar();
     

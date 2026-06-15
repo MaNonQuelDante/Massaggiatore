@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.44',
-    fullName: 'v2.5.44 by Dante',
+    version: '2.5.45',
+    fullName: 'v2.5.45 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-15 - Default form Finanza Efficace/FE - Lead + selezione calendari salvata su Drive (copia locale) + report attivita unico (logActivity)'
+    lastUpdate: '2026-06-15 - Privacy: calendari NON visibili senza login Google (home + pagina Calendario + pulizia cache al logout) + report attivita registra quale messaggio e su quale canale (whatsapp/generato)'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

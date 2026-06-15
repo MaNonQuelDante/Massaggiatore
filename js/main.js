@@ -1,6 +1,6 @@
 /* ================================================================================
-   TESTmess v2.5.44 - Default form Finanza Efficace/FE - Lead + selezione calendari
-   sincronizzata su Drive (copia locale) + report attivita unico (logActivity)
+   TESTmess v2.5.45 - Privacy: calendari non visibili senza login Google + report
+   attivita per-lead registra QUALE messaggio e su QUALE canale (whatsapp/generato)
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -531,7 +531,7 @@ async function generateMessage(e) {
     // v2.5.42 FIX: AWAIT — internamente marca il lead come contattato leggendo il
     // <select> ancora selezionato. Senza await, resetForm() più sotto azzerava la
     // selezione PRIMA che il mark leggesse l'eventId → lead mai segnato ✅.
-    await saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa);
+    await saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa, 'generato'); // v2.5.45: canale
 
     // Salva ultimo messaggio
     saveLastMessage(nome, cognome, telefono);
@@ -587,7 +587,7 @@ async function sendToWhatsApp() {
     // Salva in cronologia (v2.2.27: con servizio e società)
     // v2.5.42 FIX: AWAIT e PRIMA del resetForm — così il mark legge il lead ancora
     // selezionato (eventId presente) e la tendina non si svuota in concorrenza.
-    await saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa);
+    await saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa, 'whatsapp'); // v2.5.45: canale
     saveLastMessage(nome, cognome, telefono);
 
     // Salva in Google Contacts (v2.5.32: anche senza cognome)
@@ -941,7 +941,9 @@ window.fillFormFromDolceParanoia = function(index) {
 };
 
 // ===== CRONOLOGIA =====
-async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa) {
+async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa, canale) {
+    // canale (v2.5.45): 'whatsapp' = inviato su WhatsApp, 'generato' = generato/copiato. Default 'generato'.
+    canale = canale || 'generato';
     // SOLO DRIVE - Nessun localStorage
     let cronologia = [];
     
@@ -987,8 +989,18 @@ async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, so
     
     cronologia.unshift(entry);
 
-    // v2.5.44: report attività — traccia ogni messaggio salvato
-    if (window.logActivity) window.logActivity('messaggio_salvato', { nome: nome, cognome: cognome, telefono: telefono, servizio: servizio || '', societa: societa || '', tipo: tipoMessaggio || '' });
+    // v2.5.45: report attività sul lead — traccia QUALE messaggio + COME (canale) + QUANDO (ts in logActivity).
+    // Il testo del messaggio è troncato a 2000 caratteri per sicurezza.
+    if (window.logActivity) window.logActivity('messaggio_inviato', {
+        nome: nome,
+        cognome: cognome,
+        telefono: telefono,
+        servizio: servizio || '',
+        societa: societa || '',
+        tipo: tipoMessaggio || '',
+        canale: canale,
+        messaggio: (messaggio || '').slice(0, 2000)
+    });
 
     // Limite 1000 messaggi
     if (cronologia.length > 1000) {

@@ -596,7 +596,11 @@ function handleSignoutClick() {
             'sgmess_calendar_events',
             'sgmess_contacted_leads',
             'sgmess_last_calendar_sync',
+            'sgmess_last_sync',                  // v2.5.45: timestamp ultimo sync calendario
             'sgmess_home_calendar_filter',
+            'sgmess_available_calendars',        // v2.5.45 FIX: era questa la lista nomi calendari che restava visibile da sloggati
+            'sgmess_home_selected_calendars',    // v2.5.45: selezione calendari home
+            'sgmess_selected_calendars',         // v2.5.45: selezione calendari pagina Calendario
             'sgmess_saved_contacts',
             'sgmess_last_rubrica_sync',
             'sgmess_rubrica_scan_cache',
