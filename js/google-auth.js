@@ -1,5 +1,14 @@
 /* ================================================================================
-   GOOGLE AUTH - VERSIONE 2.5.18
+   GOOGLE AUTH - VERSIONE 2.5.49
+
+   CHANGELOG 2.5.49 (FIX FOTO PROFILO / TOKEN MORTO):
+   - ✅ getUserInfo() NON maschera più il 401: se l'API People rifiuta il token
+     (401/403) rilancia l'errore, così useRestoredToken pulisce e fa partire il
+     rinnovo silenzioso. Prima tornava un oggetto finto e restavamo "loggati"
+     con un token morto → immagine profilo rotta. Era questo il vero bug.
+   - ✅ showUserInfo(): la foto si vede SEMPRE da loggati. Se la foto Google manca
+     o non si carica (onerror) → avatar con iniziale del nome (SVG data-URI).
+     Aggiunto referrerPolicy='no-referrer' (fix foto lh3.googleusercontent.com).
 
    CHANGELOG 2.5.18 (LOGIN PERSISTENTE / SILENT RENEWAL):
    - ✅ tryRestoreSession(): al caricamento usa il token valido salvato, oppure
@@ -733,71 +742,116 @@ function handleSignoutClick() {
 
 // ===== USER INFO =====
 async function getUserInfo() {
+    console.log('🔍 Richiesta user info...');
+
+    let response;
     try {
-        console.log('🔍 Richiesta user info...');
-        const response = await gapi.client.people.people.get({
+        response = await gapi.client.people.people.get({
             resourceName: 'people/me',
             personFields: 'names,emailAddresses,photos'
         });
-        
-        console.log('📦 Response Google People API:', response.result);
-        
-        const userInfo = {
-            name: response.result.names?.[0]?.givenName || 'Dante',
-            email: response.result.emailAddresses?.[0]?.value || '',
-            photo: response.result.photos?.[0]?.url || ''
-        };
-        
-        console.log('👤 User info estratto:', userInfo);
-        
-        // Se photo vuoto, prova a usare OAuth userinfo endpoint
-        if (!userInfo.photo && accessToken) {
-            console.log('⚠️ Foto vuota, provo OAuth userinfo...');
-            try {
-                const oauthResponse = await fetch('https://www.googleapis.com/oauth2/v1/userinfo?alt=json', {
-                    headers: { 'Authorization': `Bearer ${accessToken}` }
-                });
+    } catch (error) {
+        // v2.5.49: distingui un token MORTO da un errore generico.
+        // 401/403 = token scaduto/revocato → RILANCIA, così useRestoredToken
+        // pulisce e fa partire il rinnovo silenzioso. Prima invece ingoiavamo
+        // tutto e tornavamo un oggetto finto { name:'Dante', photo:'' }: l'app
+        // restava "loggata" con un token morto e la foto profilo andava in
+        // errore (immagine rotta). Quello era il vero bug.
+        const status = error?.status || error?.result?.error?.code;
+        if (status === 401 || status === 403) {
+            console.warn(`🔒 Token rifiutato dall'API People (${status}), rilancio per silent renewal`);
+            throw error;
+        }
+        console.error('❌ Errore getUserInfo (non-auth):', error);
+        throw error;
+    }
+
+    console.log('📦 Response Google People API:', response.result);
+
+    const userInfo = {
+        name: response.result.names?.[0]?.givenName || 'Dante',
+        email: response.result.emailAddresses?.[0]?.value || '',
+        photo: response.result.photos?.[0]?.url || ''
+    };
+
+    console.log('👤 User info estratto:', userInfo);
+
+    // Se photo vuoto, prova a usare OAuth userinfo endpoint
+    if (!userInfo.photo && accessToken) {
+        console.log('⚠️ Foto vuota, provo OAuth userinfo...');
+        try {
+            const oauthResponse = await fetch('https://www.googleapis.com/oauth2/v1/userinfo?alt=json', {
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            if (oauthResponse.ok) {
                 const oauthData = await oauthResponse.json();
                 console.log('📸 OAuth userinfo:', oauthData);
                 if (oauthData.picture) {
                     userInfo.photo = oauthData.picture;
                     console.log('✅ Foto recuperata da OAuth:', userInfo.photo);
                 }
-            } catch (err) {
-                console.warn('❌ Fallito recupero foto OAuth:', err);
+            } else {
+                console.warn('⚠️ OAuth userinfo ha risposto', oauthResponse.status);
             }
+        } catch (err) {
+            console.warn('❌ Fallito recupero foto OAuth:', err);
         }
-        
-        return userInfo;
-    } catch (error) {
-        console.error('❌ Errore getUserInfo:', error);
-        return { name: 'Dante', email: '', photo: '' };
     }
+
+    return userInfo;
+}
+
+// ===== v2.5.49: AVATAR INIZIALE (SVG data-URI) =====
+// Genera un avatar con l'iniziale del nome, da usare quando la foto Google
+// manca o non si carica. È un <img> vero con una sorgente sempre valida,
+// quindi non lascia MAI l'icona di immagine rotta: se sei loggato, vedi
+// sempre qualcosa (la tua foto, o in fallback la tua iniziale).
+function buildInitialAvatar(name) {
+    const letter = ((name || 'D').trim().charAt(0) || 'D').toUpperCase();
+    // Colore di sfondo stabile derivato dalla lettera (palette Google-like)
+    const colors = ['#4285F4', '#34A853', '#EA4335', '#FBBC05', '#7E57C2', '#00897B'];
+    const bg = colors[letter.charCodeAt(0) % colors.length];
+    const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">` +
+        `<rect width="64" height="64" rx="32" fill="${bg}"/>` +
+        `<text x="32" y="32" dy=".35em" text-anchor="middle" ` +
+        `font-family="Arial, Helvetica, sans-serif" font-size="30" fill="#ffffff">${letter}</text>` +
+        `</svg>`;
+    return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
 }
 
 // ===== SHOW USER INFO =====
 function showUserInfo(userInfo) {
     console.log('📸 Mostrando user info:', userInfo);
-    
+
     const signInBtn = document.getElementById('googleSignInBtn');
     if (signInBtn) signInBtn.style.display = 'none';
-    
+
     const userInfoDiv = document.getElementById('userInfo');
     if (userInfoDiv) userInfoDiv.style.display = 'flex';
-    
+
     const profilePic = document.getElementById('userProfilePic');
     if (profilePic) {
-        if (userInfo.photo) {
-            profilePic.src = userInfo.photo;
-            profilePic.alt = userInfo.name;
-            profilePic.title = `Connesso come ${userInfo.name} - Clicca per disconnetterti`;
-            profilePic.style.display = 'block';
-            console.log('✅ Foto profilo impostata:', userInfo.photo);
-        } else {
-            // Fallback: mostra iniziale nome
-            profilePic.style.display = 'none';
-            console.warn('⚠️ Foto profilo vuota, uso fallback');
-        }
+        // v2.5.49: la foto si deve SEMPRE vedere se sei loggato.
+        const fallbackAvatar = buildInitialAvatar(userInfo.name);
+        // no-referrer = fix noto per le foto lh3.googleusercontent.com che a
+        // volte vengono bloccate quando il browser invia il referer.
+        profilePic.referrerPolicy = 'no-referrer';
+        // Se la foto Google non si carica (URL scaduto/bloccato/404), passa
+        // all'avatar iniziale invece di lasciare l'immagine rotta. onerror si
+        // auto-disattiva per evitare loop se anche il fallback fallisse.
+        profilePic.onerror = function () {
+            this.onerror = null;
+            this.src = fallbackAvatar;
+            console.warn('⚠️ Foto profilo non caricata: uso avatar iniziale');
+        };
+        profilePic.src = userInfo.photo || fallbackAvatar;
+        profilePic.alt = userInfo.name;
+        profilePic.title = `Connesso come ${userInfo.name} - Clicca per disconnetterti`;
+        profilePic.style.display = 'block';
+        console.log(userInfo.photo
+            ? '✅ Foto profilo impostata (con fallback iniziale)'
+            : 'ℹ️ Nessuna foto Google: uso avatar iniziale');
     }
     
     // headerAvatar rimosso dall'HTML in v2.2.14 (solo foto centrale)

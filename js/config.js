@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.48',
-    fullName: 'v2.5.48 by Dante',
+    version: '2.5.49',
+    fullName: 'v2.5.49 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Salvataggio in rubrica (Google Contacts) SOLO per il primo messaggio E quando il lead proviene dal calendario (option con eventId): nuovo gate shouldSaveContact() in sendToWhatsApp/generateMessage + log quando il salvataggio viene saltato'
+    lastUpdate: '2026-06-16 - FIX foto profilo / login Google: getUserInfo non maschera più il 401 (token morto) ma lo rilancia, così parte il rinnovo silenzioso invece di restare loggati con token scaduto; foto profilo con fallback ad avatar-iniziale (SVG) e referrerPolicy no-referrer → l\'immagine non resta mai rotta quando sei loggato'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
