@@ -9,7 +9,8 @@ const STORAGE_KEYS = {
     CRONOLOGIA: 'CRONOLOGIA',
     LAST_MESSAGE: 'LAST_MESSAGE',
     TEMPLATES: 'TEMPLATES',
-    OPERATOR_NAME: 'OPERATOR_NAME'
+    OPERATOR_NAME: 'OPERATOR_NAME',
+    LEAD_CHECKLIST: 'LEAD_CHECKLIST' // v2.5.55: stato checkbox funnel-conferma per lead (cloud/Drive)
 };
 
 // ===== STORAGE WRAPPER (Google Drive o localStorage fallback) =====
@@ -1206,6 +1207,145 @@ function renderCronologia() {
     listContainer.innerHTML = html;
 }
 
+// ===== FUNNEL CONFERMA LEAD (checklist 5 step dentro ogni card lead) — v2.5.55 =====
+// Le 5 righe-azione mostrate in ogni card lead. Gli orari sono calcolati da T0 (NON
+// cumulativi): T0 = orario di INIZIO dell'evento Google Calendar con titolo "LEAD - Call"
+// agganciato a quel lead. La riga "noshow" non ha orario (azione di fallback).
+const LEAD_CHECKLIST_STEPS = [
+    { key: 'ingresso',    label: 'Ingresso lead',           offsetH: 0,    defaultChecked: true }, // T0, spuntata di default
+    { key: 'scrivere',    label: 'Scrivere al lead',         offsetH: 2 },                          // T0 + 2h
+    { key: 'sollecitare', label: 'Sollecitare il lead',      offsetH: 4 },                          // T0 + 4h
+    { key: 'chiamata',    label: 'Sollecitare via chiamata', offsetH: 6 },                          // T0 + 6h
+    { key: 'noshow',      label: 'Inviare a Gruppo NoShow',  offsetH: null }                        // solo checkbox
+];
+
+// Stato checkbox per lead, caricato da Drive in loadLeadSection. { "<leadKey>": { ingresso:true, ... } }
+// NB: il render NON scrive mai in cloud (come da pattern v2.5.54): si salva solo su azione utente.
+let leadChecklistState = {};
+
+// Telefono → sole cifre significative (ultime 9, ovvero il numero senza prefisso 39/0039).
+// Serve SOLO a fare il match card-lead ↔ evento "LEAD - Call" in modo robusto al prefisso.
+function leadPhone9(telefono) {
+    const digits = (telefono || '').replace(/\D/g, '');
+    return digits.length >= 9 ? digits.slice(-9) : '';
+}
+
+// Chiave anagrafica di fallback (quando manca il telefono), allineata al raggruppamento dei lead.
+function leadNameKey(nome, cognome) {
+    return ((nome || '') + '|' + (cognome || '')).toLowerCase().trim();
+}
+
+// Costruisce l'indice degli eventi "LEAD - Call" già sincronizzati in localStorage
+// (sgmess_calendar_events, popolato da syncCalendarEvents). Ritorna due mappe:
+// per telefono (ultime 9 cifre) e per nome — entrambe → T0 (Date di inizio evento).
+// Riusa la logica di estrazione esistente del progetto (extractPhoneFromEvent / extractNameFromEvent),
+// non la reinventa. Se non c'è orario (evento all-day) l'evento è ignorato: niente T0 → niente orari finti.
+function buildLeadCallIndex() {
+    const byPhone = {};
+    const byName = {};
+    let events = [];
+    try {
+        events = JSON.parse(localStorage.getItem('sgmess_calendar_events') || '[]');
+    } catch (e) {
+        console.warn('⚠️ [Lead] Eventi calendario illeggibili da localStorage:', e);
+        return { byPhone, byName };
+    }
+
+    events.forEach(event => {
+        // Solo eventi col titolo esatto "LEAD - Call" (case-insensitive, trim)
+        if (!event || !event.summary) return;
+        if (event.summary.trim().toLowerCase() !== 'lead - call') return;
+
+        // T0 = orario di INIZIO. Serve un orario reale: scarta gli all-day (start senza 'T').
+        const startStr = event.start || '';
+        if (!String(startStr).includes('T')) return;
+        const t0 = new Date(startStr);
+        if (isNaN(t0.getTime())) return;
+
+        // Match per telefono (preferito) e per nome (fallback). A parità di lead tengo l'evento
+        // con T0 più recente (l'ultima call pianificata vince).
+        const phone9 = leadPhone9(extractPhoneFromEvent(event));
+        if (phone9) {
+            if (!byPhone[phone9] || t0 > byPhone[phone9]) byPhone[phone9] = t0;
+        }
+        const parsed = parseNameSurname(extractNameFromEvent(event));
+        const nameKey = leadNameKey(parsed.firstName, parsed.lastName);
+        if (nameKey && nameKey !== '|') {
+            if (!byName[nameKey] || t0 > byName[nameKey]) byName[nameKey] = t0;
+        }
+    });
+
+    return { byPhone, byName };
+}
+
+// T0 per un lead: prima per telefono (ultime 9 cifre), poi per nome. null se nessun evento "LEAD - Call".
+function findLeadT0(lead, index) {
+    const phone9 = leadPhone9(lead.telefono);
+    if (phone9 && index.byPhone[phone9]) return index.byPhone[phone9];
+    const nameKey = leadNameKey(lead.nome, lead.cognome);
+    if (nameKey && nameKey !== '|' && index.byName[nameKey]) return index.byName[nameKey];
+    return null;
+}
+
+// hh:mm (24h) di T0 + offsetH ore. '' se non c'è T0.
+function leadStepTime(t0, offsetH) {
+    if (!t0 || offsetH === null) return '';
+    const d = new Date(t0.getTime() + offsetH * 3600 * 1000);
+    return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// HTML del blocco checklist per una singola card lead.
+function renderLeadChecklist(leadKey, t0) {
+    const state = leadChecklistState[leadKey] || {};
+    const keyAttr = encodeURIComponent(leadKey); // sicuro come valore di data-attribute
+    const noT0 = !t0;
+
+    let rows = '';
+    LEAD_CHECKLIST_STEPS.forEach(step => {
+        const checked = (state[step.key] !== undefined) ? state[step.key] : (step.defaultChecked || false);
+        // Orario: solo per le righe con offset. Se manca T0 mostro "—" (mai orari inventati).
+        let timeHtml = '';
+        if (step.offsetH !== null) {
+            const t = leadStepTime(t0, step.offsetH);
+            timeHtml = `<span class="lc-time">${t || '—'}</span>`;
+        }
+        rows += `
+                    <label class="lead-check-row${checked ? ' done' : ''}">
+                        <input type="checkbox" data-lead-key="${keyAttr}" data-step="${step.key}"${checked ? ' checked' : ''}>
+                        <span class="lc-label">${step.label}</span>
+                        ${timeHtml}
+                    </label>`;
+    });
+
+    const hint = noT0
+        ? `<span class="lead-checklist-hint" title="Nessun evento Calendar 'LEAD - Call' agganciato a questo lead">T0 n/d</span>`
+        : '';
+
+    return `
+                <div class="lead-checklist">
+                    <div class="lead-checklist-title"><i class="fas fa-list-check"></i> Funnel conferma ${hint}</div>
+                    ${rows}
+                </div>`;
+}
+
+// Toggle di una checkbox: aggiorna lo stato e lo persiste su Drive (stesso meccanismo dei dati lead).
+async function toggleLeadChecklistStep(leadKey, step, checked) {
+    if (!leadChecklistState[leadKey]) leadChecklistState[leadKey] = {};
+    leadChecklistState[leadKey][step] = checked;
+
+    if (window.DriveStorage && window.accessToken) {
+        try {
+            await window.DriveStorage.save(STORAGE_KEYS.LEAD_CHECKLIST, leadChecklistState);
+            console.log(`💾 [Lead] Checklist salvata (${leadKey} · ${step} = ${checked})`);
+        } catch (e) {
+            console.error('❌ [Lead] Salvataggio checklist fallito:', e);
+        }
+    } else {
+        console.warn('⚠️ [Lead] Non loggato: stato checklist non salvato su cloud.');
+    }
+}
+window.toggleLeadChecklistStep = toggleLeadChecklistStep;
+
 // ===== SEZIONE LEAD (vista aggregata della cronologia, raggruppata per lead) =====
 async function loadLeadSection() {
     const listContainer = document.getElementById('leadList');
@@ -1241,6 +1381,21 @@ async function loadLeadSection() {
         return;
     }
 
+    // v2.5.55: stato checkbox del funnel-conferma (cloud/Drive). Il render NON scrive mai in
+    // cloud (distingue loading da vuoto): se manca, le checkbox usano i default (vedi STEPS).
+    leadChecklistState = {};
+    if (window.DriveStorage) {
+        try {
+            const saved = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CHECKLIST);
+            if (saved && typeof saved === 'object') leadChecklistState = saved;
+        } catch (error) {
+            console.error('❌ Errore caricamento checklist lead:', error);
+        }
+    }
+
+    // v2.5.55: indice T0 dagli eventi Calendar "LEAD - Call" già sincronizzati in localStorage.
+    const leadCallIndex = buildLeadCallIndex();
+
     // Raggruppa per lead: chiave = telefono (solo cifre) se presente, altrimenti nome+cognome
     const leadsMap = {};
     cronologia.forEach(entry => {
@@ -1249,7 +1404,7 @@ async function loadLeadSection() {
             ? 'tel:' + telDigits
             : 'nome:' + ((entry.nome || '') + '|' + (entry.cognome || '')).toLowerCase().trim();
         if (!leadsMap[key]) {
-            leadsMap[key] = { nome: '', cognome: '', telefono: '', messaggi: [] };
+            leadsMap[key] = { _key: key, nome: '', cognome: '', telefono: '', messaggi: [] };
         }
         const lead = leadsMap[key];
         // Tieni i dati anagrafici quando disponibili
@@ -1307,6 +1462,10 @@ async function loadLeadSection() {
             `;
         });
 
+        // v2.5.55: blocco funnel-conferma (5 step con checkbox). T0 = inizio evento "LEAD - Call".
+        const t0 = findLeadT0(lead, leadCallIndex);
+        const checklistHtml = renderLeadChecklist(lead._key, t0);
+
         html += `
             <div class="cronologia-item">
                 <div class="cronologia-header">
@@ -1316,6 +1475,7 @@ async function loadLeadSection() {
                         ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
                     </span>
                 </div>
+                ${checklistHtml}
                 <div class="lead-azioni">
                     ${azioniHtml}
                 </div>
@@ -1324,6 +1484,15 @@ async function loadLeadSection() {
     });
 
     listContainer.innerHTML = html;
+
+    // v2.5.55: aggancia i toggle delle checkbox (event delegation dopo l'innerHTML).
+    listContainer.querySelectorAll('.lead-check-row input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            const leadKey = decodeURIComponent(cb.dataset.leadKey);
+            cb.closest('.lead-check-row')?.classList.toggle('done', cb.checked);
+            toggleLeadChecklistStep(leadKey, cb.dataset.step, cb.checked);
+        });
+    });
 }
 
 // ===== ULTIMO MESSAGGIO =====

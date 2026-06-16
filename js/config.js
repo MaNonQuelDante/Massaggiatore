@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.54',
-    fullName: 'v2.5.54 by Dante',
+    version: '2.5.55',
+    fullName: 'v2.5.55 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Filtro "Filtra per Calendario" (home) compattato in un dropdown multi-select a riga singola (icona + selezione + chevron, chiusura al click fuori) con persistenza cloud (Drive). MAI default a "tutti i calendari": utente nuovo = selezione vuota = nessun evento finché non sceglie. La funzione di render non scrive mai in cloud (distingue loading da vuoto): salva solo su azione utente.'
+    lastUpdate: '2026-06-16 - Funnel conferma lead: dentro ogni card della pagina Lead, blocco checklist a 5 step con checkbox (Ingresso T0 spuntato di default, Scrivere T0+2h, Sollecitare T0+4h, Chiamata T0+6h, Inviare a Gruppo NoShow senza orario). T0 = inizio dell’evento Google Calendar "LEAD - Call" agganciato al lead (match per telefono/nome riusando extractPhoneFromEvent/extractNameFromEvent; niente evento → orari "—", mai inventati). Stato checkbox persistito su Drive (LEAD_CHECKLIST); il render non scrive mai in cloud, salva solo su azione utente.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
