@@ -1230,31 +1230,67 @@ function leadPhone9(telefono) {
     return digits.length >= 9 ? digits.slice(-9) : '';
 }
 
-// Chiave anagrafica di fallback (quando manca il telefono), allineata al raggruppamento dei lead.
-function leadNameKey(nome, cognome) {
-    return ((nome || '') + '|' + (cognome || '')).toLowerCase().trim();
+// Normalizza un nome per il confronto: minuscolo, senza accenti, solo lettere e spazi,
+// spazi compattati. Rende il match robusto a maiuscole/minuscole, accenti e punteggiatura.
+function normalizeName(str) {
+    return (str || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '') // via accenti (è→e, ò→o…)
+        .toLowerCase()
+        .replace(/[^a-z\s]/g, ' ')                          // via cifre/punteggiatura/emoji
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
-// Costruisce l'indice degli eventi "LEAD - Call" già sincronizzati in localStorage
-// (sgmess_calendar_events, popolato da syncCalendarEvents). Ritorna due mappe:
-// per telefono (ultime 9 cifre) e per nome — entrambe → T0 (Date di inizio evento).
-// Riusa la logica di estrazione esistente del progetto (extractPhoneFromEvent / extractNameFromEvent),
-// non la reinventa. Se non c'è orario (evento all-day) l'evento è ignorato: niente T0 → niente orari finti.
+// Distanza di Levenshtein (n. minimo di inserimenti/cancellazioni/sostituzioni). Tollera i refusi.
+function levenshtein(a, b) {
+    if (a === b) return 0;
+    const m = a.length, n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    let prev = Array.from({ length: n + 1 }, (_, i) => i);
+    let cur = new Array(n + 1);
+    for (let i = 1; i <= m; i++) {
+        cur[0] = i;
+        for (let j = 1; j <= n; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+        }
+        [prev, cur] = [cur, prev];
+    }
+    return prev[n];
+}
+
+// Refusi ammessi in base alla lunghezza del nome: nomi corti = nessuna tolleranza
+// (troppo rischio di falsi positivi), nomi lunghi = fino a 2 modifiche.
+function nameTypoTolerance(len) {
+    if (len <= 4) return 0;
+    if (len <= 8) return 1;
+    return 2;
+}
+
+// Costruisce la lista dei candidati dagli eventi "LEAD - Call" già sincronizzati in
+// localStorage (sgmess_calendar_events, popolato da syncCalendarEvents). "LEAD - Call" è
+// riconosciuto SIA come TITOLO evento SIA come NOME del CALENDARIO: così il match regge
+// qualunque sia la convenzione usata su Google Calendar. Per ogni candidato salviamo
+// telefono (ultime 9 cifre, dalla descrizione → NON cambia rinominando l'evento), nome
+// normalizzato e T0 (inizio). Riusa gli helper esistenti (extractPhoneFromEvent /
+// extractNameFromEvent / parseNameSurname). Eventi all-day scartati: niente orario → niente T0.
 function buildLeadCallIndex() {
-    const byPhone = {};
-    const byName = {};
+    const candidates = [];
     let events = [];
     try {
         events = JSON.parse(localStorage.getItem('sgmess_calendar_events') || '[]');
     } catch (e) {
         console.warn('⚠️ [Lead] Eventi calendario illeggibili da localStorage:', e);
-        return { byPhone, byName };
+        return { candidates };
     }
 
     events.forEach(event => {
-        // Solo eventi col titolo esatto "LEAD - Call" (case-insensitive, trim)
-        if (!event || !event.summary) return;
-        if (event.summary.trim().toLowerCase() !== 'lead - call') return;
+        if (!event) return;
+        const isLeadCall =
+            (event.summary && event.summary.trim().toLowerCase() === 'lead - call') ||
+            (event.calendarName && event.calendarName.trim().toLowerCase() === 'lead - call');
+        if (!isLeadCall) return;
 
         // T0 = orario di INIZIO. Serve un orario reale: scarta gli all-day (start senza 'T').
         const startStr = event.start || '';
@@ -1262,28 +1298,65 @@ function buildLeadCallIndex() {
         const t0 = new Date(startStr);
         if (isNaN(t0.getTime())) return;
 
-        // Match per telefono (preferito) e per nome (fallback). A parità di lead tengo l'evento
-        // con T0 più recente (l'ultima call pianificata vince).
         const phone9 = leadPhone9(extractPhoneFromEvent(event));
-        if (phone9) {
-            if (!byPhone[phone9] || t0 > byPhone[phone9]) byPhone[phone9] = t0;
-        }
         const parsed = parseNameSurname(extractNameFromEvent(event));
-        const nameKey = leadNameKey(parsed.firstName, parsed.lastName);
-        if (nameKey && nameKey !== '|') {
-            if (!byName[nameKey] || t0 > byName[nameKey]) byName[nameKey] = t0;
-        }
+        const nameNorm = normalizeName(parsed.firstName + ' ' + parsed.lastName);
+
+        candidates.push({ phone9, nameNorm, t0 });
     });
 
-    return { byPhone, byName };
+    return { candidates };
 }
 
-// T0 per un lead: prima per telefono (ultime 9 cifre), poi per nome. null se nessun evento "LEAD - Call".
+// T0 per un lead. Dal più sicuro al più tollerante:
+//   1) TELEFONO (ultime 9 cifre) — univoco e stabile (dalla descrizione, non cambia rinominando).
+//   2) NOME normalizzato IDENTICO (ignora maiuscole/accenti/punteggiatura).
+//   3) NOME simile entro la soglia refusi, SOLO se non ambiguo (un solo nome ai minimi e
+//      nettamente più vicino del successivo) → evita di agganciare il lead sbagliato.
+// A parità di candidato vince il T0 più recente. Il titolo evento può cambiare dopo l'invio
+// del messaggio: il match per nome è volutamente tollerante ma non può essere 100%.
 function findLeadT0(lead, index) {
+    const cands = index.candidates || [];
     const phone9 = leadPhone9(lead.telefono);
-    if (phone9 && index.byPhone[phone9]) return index.byPhone[phone9];
-    const nameKey = leadNameKey(lead.nome, lead.cognome);
-    if (nameKey && nameKey !== '|' && index.byName[nameKey]) return index.byName[nameKey];
+    const leadName = normalizeName((lead.nome || '') + ' ' + (lead.cognome || ''));
+    const latest = (acc, t0) => (!acc || t0 > acc) ? t0 : acc;
+
+    // 1) Telefono
+    if (phone9) {
+        let best = null;
+        cands.forEach(c => { if (c.phone9 && c.phone9 === phone9) best = latest(best, c.t0); });
+        if (best) return best;
+    }
+
+    if (!leadName) return null;
+
+    // 2) Nome identico (normalizzato)
+    {
+        let best = null;
+        cands.forEach(c => { if (c.nameNorm && c.nameNorm === leadName) best = latest(best, c.t0); });
+        if (best) return best;
+    }
+
+    // 3) Nome simile (refusi), solo se non ambiguo
+    const tol = nameTypoTolerance(leadName.length);
+    if (tol > 0) {
+        const scored = cands
+            .filter(c => c.nameNorm)
+            .map(c => ({ d: levenshtein(leadName, c.nameNorm), c }))
+            .sort((a, b) => a.d - b.d);
+        if (scored.length && scored[0].d <= tol) {
+            const minD = scored[0].d;
+            const atMin = scored.filter(s => s.d === minD);
+            const distinctNames = new Set(atMin.map(s => s.c.nameNorm));
+            const next = scored.find(s => s.d > minD);
+            const margin = next ? next.d - minD : Infinity;
+            // un solo nome ai minimi (stessa persona, eventuali più eventi) e gap ≥1 sul prossimo nome diverso
+            if (distinctNames.size === 1 && margin >= 1) {
+                return atMin.reduce((acc, s) => latest(acc, s.c.t0), null);
+            }
+        }
+    }
+
     return null;
 }
 

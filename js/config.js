@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.55',
-    fullName: 'v2.5.55 by Dante',
+    version: '2.5.56',
+    fullName: 'v2.5.56 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Funnel conferma lead: dentro ogni card della pagina Lead, blocco checklist a 5 step con checkbox (Ingresso T0 spuntato di default, Scrivere T0+2h, Sollecitare T0+4h, Chiamata T0+6h, Inviare a Gruppo NoShow senza orario). T0 = inizio dell’evento Google Calendar "LEAD - Call" agganciato al lead (match per telefono/nome riusando extractPhoneFromEvent/extractNameFromEvent; niente evento → orari "—", mai inventati). Stato checkbox persistito su Drive (LEAD_CHECKLIST); il render non scrive mai in cloud, salva solo su azione utente.'
+    lastUpdate: '2026-06-16 - Funnel conferma lead, match più robusto. T0 = inizio evento "LEAD - Call", riconosciuto sia come TITOLO evento sia come NOME del CALENDARIO. Aggancio card↔evento: 1) telefono (ultime 9 cifre, dalla descrizione: non cambia se rinomini l’evento dopo l’invio), 2) nome normalizzato identico (ignora maiuscole/accenti/punteggiatura), 3) nome simile entro soglia refusi (Levenshtein) ma SOLO se non ambiguo. Niente match → orari "—" + badge "T0 n/d", mai orari inventati.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
