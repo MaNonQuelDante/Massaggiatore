@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.47',
-    fullName: 'v2.5.47 by Dante',
+    version: '2.5.48',
+    fullName: 'v2.5.48 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Login Google persistente: rinnovo silenzioso al caricamento (tryRestoreSession + requestSilentRenewal), popup solo al primo login o dopo revoca, auto-refresh/keep-alive unificati (google-auth modulo v2.5.18)'
+    lastUpdate: '2026-06-16 - Salvataggio in rubrica (Google Contacts) SOLO per il primo messaggio E quando il lead proviene dal calendario (option con eventId): nuovo gate shouldSaveContact() in sendToWhatsApp/generateMessage + log quando il salvataggio viene saltato'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

@@ -1,6 +1,7 @@
 /* ================================================================================
-   TESTmess v2.5.45 - Privacy: calendari non visibili senza login Google + report
-   attivita per-lead registra QUALE messaggio e su QUALE canale (whatsapp/generato)
+   TESTmess v2.5.48 - Salvataggio rubrica (Google Contacts) SOLO per il PRIMO
+   messaggio E quando il lead proviene dal calendario (option #selectLead con
+   dataset.eventId). Nuovo gate shouldSaveContact() + log quando viene saltato.
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -537,7 +538,9 @@ async function generateMessage(e) {
     saveLastMessage(nome, cognome, telefono);
 
     // Salva in Google Contacts (v2.5.32: anche senza cognome)
-    if (window.saveContactToGoogle && nome && telefono) {
+    // v2.5.48: solo se PRIMO messaggio E lead dal calendario (vedi shouldSaveContact).
+    // Letto QUI, PRIMA di resetForm() più sotto, così tipoMessaggio/eventId sono ancora validi.
+    if (window.saveContactToGoogle && nome && telefono && shouldSaveContact()) {
         checkAndSaveContact(nome, cognome, telefono, societa);
     }
 
@@ -591,12 +594,41 @@ async function sendToWhatsApp() {
     saveLastMessage(nome, cognome, telefono);
 
     // Salva in Google Contacts (v2.5.32: anche senza cognome)
-    if (window.saveContactToGoogle && nome && telefono) {
+    // v2.5.48: solo se PRIMO messaggio E lead dal calendario (vedi shouldSaveContact).
+    // Letto QUI, PRIMA di resetForm() più sotto, così tipoMessaggio/eventId sono ancora validi.
+    if (window.saveContactToGoogle && nome && telefono && shouldSaveContact()) {
         checkAndSaveContact(nome, cognome, telefono, societa);
     }
 
     // Reset form (per ultimo: la selezione è già stata usata dal mark)
     await resetForm();
+}
+
+// ===== GATE SALVATAGGIO RUBRICA (v2.5.48) =====
+// Salva il contatto in Google Contacts SOLO se ENTRAMBE le condizioni sono vere:
+//   1) il tipo messaggio selezionato è il PRIMO messaggio (tipoMessaggio === 'primo_messaggio');
+//   2) il lead selezionato proviene dal CALENDARIO (l'<option> in #selectLead ha dataset.eventId).
+// IMPORTANTE: va letta PRIMA di resetForm(). I chiamanti (sendToWhatsApp/generateMessage)
+// la invocano già prima del reset, quando tipoMessaggio ed eventId sono ancora valorizzati.
+// Quando il gate NON è superato logga il motivo e NON salva (la cronologia e il mark
+// lead-contattato restano invariati: questo gate riguarda SOLO la rubrica).
+function shouldSaveContact() {
+    const tipoMessaggio = document.getElementById('tipoMessaggio')?.value;
+    const isPrimoMessaggio = tipoMessaggio === 'primo_messaggio';
+
+    const selectLead = document.getElementById('selectLead');
+    const eventId = selectLead?.options[selectLead.selectedIndex]?.dataset?.eventId;
+    const isFromCalendar = !!eventId;
+
+    if (!isPrimoMessaggio) {
+        console.log(`⏭️ Salvataggio rubrica saltato: tipo messaggio non-primo (tipoMessaggio="${tipoMessaggio || ''}")`);
+        return false;
+    }
+    if (!isFromCalendar) {
+        console.log('⏭️ Salvataggio rubrica saltato: lead senza eventId (non proviene dal calendario)');
+        return false;
+    }
+    return true;
 }
 
 // ===== CHECK E SALVA CONTATTO =====
