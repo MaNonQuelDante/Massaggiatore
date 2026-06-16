@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.45',
-    fullName: 'v2.5.45 by Dante',
+    version: '2.5.46',
+    fullName: 'v2.5.46 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-15 - Privacy: calendari NON visibili senza login Google (home + pagina Calendario + pulizia cache al logout) + report attivita registra quale messaggio e su quale canale (whatsapp/generato)'
+    lastUpdate: '2026-06-16 - Modalità videochiamata letta dall\'evento ("Tipo di call: Whatsapp" → WhatsApp, altro → Link) + FIX toggle Link/WhatsApp che perdeva il colore alla selezione del lead + default Link quando nessun lead è selezionato'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

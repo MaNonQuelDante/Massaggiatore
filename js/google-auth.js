@@ -1052,7 +1052,12 @@ async function checkSetterGenderFromEvent(event) {
 }
 
 function setAssistenteToggle(gender) {
-    const toggleBtns = document.querySelectorAll('.toggle-group .toggle-btn[data-value]');
+    // v2.5.46 FIX: scope SOLO al toggle Assistente (M/F).
+    // Prima il selettore '.toggle-group .toggle-btn[data-value]' prendeva ANCHE
+    // i bottoni della modalità videochiamata (LINK/WA): non combaciando con
+    // 'M'/'F' venivano deselezionati, così il toggle Link/WhatsApp perdeva il
+    // colore ad ogni selezione di un lead (dopo il login).
+    const toggleBtns = document.querySelectorAll('.toggle-btn[data-value="M"], .toggle-btn[data-value="F"]');
     toggleBtns.forEach(btn => {
         if (btn.dataset.value === gender) {
             btn.classList.add('active');

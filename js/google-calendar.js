@@ -1080,6 +1080,11 @@ function fillFormFromEvent(event) {
         }
     }
     
+    // 🆕 v2.5.46: imposta la modalità videochiamata leggendo l'evento.
+    // Regola: nell'evento i setter scrivono "Tipo di call: Whatsapp/Link".
+    // Se contiene "whatsapp" → WA, qualsiasi altra cosa (o riga assente) → LINK.
+    setMeetModeToggle(detectMeetMode(event));
+
     // ✨ NUOVO: Controllo genere SETTER (non lead) per {YY}
     if (window.checkSetterGenderFromEvent) {
         window.checkSetterGenderFromEvent(event);
@@ -1098,6 +1103,34 @@ function fillFormFromEvent(event) {
     
     console.log('✅ Form compilato da evento:', leadName, '→', firstName, lastName, '|', servizio, '→', societa);
 }
+
+// ===== v2.5.46: RILEVA MODALITÀ VIDEOCHIAMATA DALL'EVENTO =====
+// Legge SOLO la riga "Tipo di call: ..." scritta dai setter nell'evento.
+// IMPORTANTE: non si fa un match generico su "whatsapp" perché l'app aggiunge
+// da sola una riga "📱 WhatsApp: https://wa.me/..." ad OGNI evento col telefono
+// (vedi addWhatsAppLinkToEvent) → un contains generico darebbe sempre falso
+// positivo WhatsApp. Quindi si legge solo il valore dopo l'etichetta "Tipo di call".
+function detectMeetMode(event) {
+    const text = `${event.summary || ''}\n${event.description || ''}\n${event.location || ''}`;
+    // "di" reso opzionale per tollerare "Tipo call:" oltre a "Tipo di call:"
+    const match = text.match(/tipo(?:\s+di)?\s+call\s*:?\s*([^\n\r]*)/i);
+    const value = match ? match[1] : '';
+    const mode = /whatsapp/i.test(value) ? 'WA' : 'LINK';
+    console.log('📞 [v2.5.46] Modalità rilevata:', mode, '| riga "Tipo di call":', value.trim() || '(assente)');
+    return mode;
+}
+
+// ===== v2.5.46: IMPOSTA TOGGLE MODALITÀ VIDEOCHIAMATA =====
+// Agisce SOLO sui bottoni Link/WhatsApp, mai sugli altri toggle (es. Assistente M/F).
+function setMeetModeToggle(mode) {
+    const btns = document.querySelectorAll('.toggle-btn[data-value="LINK"], .toggle-btn[data-value="WA"]');
+    btns.forEach(btn => {
+        if (btn.dataset.value === mode) btn.classList.add('active');
+        else btn.classList.remove('active');
+    });
+    if (window.updatePreview) window.updatePreview();
+}
+window.setMeetModeToggle = setMeetModeToggle;
 
 // ===== PARSING INTELLIGENTE NOME/COGNOME =====
 function parseNameSurname(fullName) {
@@ -1686,9 +1719,13 @@ document.addEventListener('DOMContentLoaded', function() {
             if (selectedOption && selectedOption.dataset.eventData) {
                 const event = JSON.parse(selectedOption.dataset.eventData);
                 fillFormFromEvent(event);
-                
+
                 // 🆕 v2.5.31: Controlla e correggi titolo evento (rename SEMPRE)
                 await ensureEventTitleCorrect(event);
+            } else {
+                // 🆕 v2.5.46: nessun lead selezionato (es. "-- Seleziona lead --")
+                // → torna al default "Link".
+                setMeetModeToggle('LINK');
             }
         });
     }

@@ -648,7 +648,10 @@ async function resetForm() {
     document.getElementById('cognome').value = '';
     document.getElementById('telefono').value = '';
     document.getElementById('orario').value = '15';
-    
+
+    // v2.5.46: nessun lead attivo dopo il reset → modalità videochiamata torna a "Link"
+    if (window.setMeetModeToggle) window.setMeetModeToggle('LINK');
+
     await updatePreview();
     
     // 🔥 RIPOPOLA DROPDOWN LEAD SE C'ERA UNA DATA SELEZIONATA (v2.5.16)
