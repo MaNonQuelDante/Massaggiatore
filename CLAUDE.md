@@ -12,8 +12,10 @@ senza chiedere**, questa sequenza completa:
 2. **CHANGELOG** `CHANGELOG_v<versione>.md` con cosa è cambiato.
 3. **Commit** git con messaggio chiaro `vX.Y.Z - ...`.
 4. **Push** su GitHub (`origin/main`).
-5. **Backup su Drive**: `tar.gz` del progetto (escluso `.git`) caricato su `gdrive:`
-   con nome `TESTmess_v<versione>_<DESCRIZIONE>.tar.gz`.
+5. **Backup su Drive**: `tar.gz` del progetto (escluso `.git`) con nome
+   `TESTmess_v<versione>_<DESCRIZIONE>.tar.gz`, caricato nella cartella
+   **`gdrive:RIPARTIAMO DA QUI/000) SOFTWARE/02) MASSAGGIATORE/2030 top versioni/`**
+   (NON nella root di Drive — lì stanno tutte le versioni storiche).
 
 NON chiedo conferma per fare questo. Lo faccio e basta.
 L'UNICA eccezione è se Dante dice esplicitamente "non committare" / "mostrami
