@@ -10,7 +10,8 @@ const STORAGE_KEYS = {
     LAST_MESSAGE: 'LAST_MESSAGE',
     TEMPLATES: 'TEMPLATES',
     OPERATOR_NAME: 'OPERATOR_NAME',
-    LEAD_CHECKLIST: 'LEAD_CHECKLIST' // v2.5.55: stato checkbox funnel-conferma per lead (cloud/Drive)
+    LEAD_CHECKLIST: 'LEAD_CHECKLIST', // v2.5.55: stato checkbox funnel-conferma per lead (cloud/Drive)
+    LEAD_BINDINGS: 'LEAD_BINDINGS'    // v2.5.57: aggancio manuale lead↔evento "LEAD - Call" (cloud/Drive)
 };
 
 // ===== STORAGE WRAPPER (Google Drive o localStorage fallback) =====
@@ -1223,6 +1224,18 @@ const LEAD_CHECKLIST_STEPS = [
 // NB: il render NON scrive mai in cloud (come da pattern v2.5.54): si salva solo su azione utente.
 let leadChecklistState = {};
 
+// v2.5.57: agganci manuali lead↔evento "LEAD - Call", caricati da Drive in loadLeadSection.
+//   { "<leadKey>": { eventId?, manualT0?, dismissed?: [eventId...] } }
+// - eventId   = evento confermato a mano (vince sull'automatico)
+// - manualT0  = orario impostato a mano (vince su tutto), stringa datetime-local
+// - dismissed = proposte rifiutate ("Non è lei"), da non riproporre
+let leadBindings = {};
+
+// Dati della sezione Lead tenuti in memoria, così il re-render (dopo una scelta utente)
+// NON deve riscaricare nulla da Drive.
+let leadSectionLeads = [];
+let leadSectionCandidates = [];
+
 // Telefono → sole cifre significative (ultime 9, ovvero il numero senza prefisso 39/0039).
 // Serve SOLO a fare il match card-lead ↔ evento "LEAD - Call" in modo robusto al prefisso.
 function leadPhone9(telefono) {
@@ -1299,24 +1312,25 @@ function buildLeadCallIndex() {
         if (isNaN(t0.getTime())) return;
 
         const phone9 = leadPhone9(extractPhoneFromEvent(event));
-        const parsed = parseNameSurname(extractNameFromEvent(event));
+        const displayName = extractNameFromEvent(event);
+        const parsed = parseNameSurname(displayName);
         const nameNorm = normalizeName(parsed.firstName + ' ' + parsed.lastName);
+        const nameDisplay = (displayName && displayName !== 'Senza nome') ? displayName : (event.summary || 'Evento');
 
-        candidates.push({ phone9, nameNorm, t0 });
+        candidates.push({ id: event.id || '', phone9, nameNorm, nameDisplay, t0 });
     });
 
     return { candidates };
 }
 
-// T0 per un lead. Dal più sicuro al più tollerante:
+// T0 AUTOMATICO per un lead. Dal più sicuro al più tollerante:
 //   1) TELEFONO (ultime 9 cifre) — univoco e stabile (dalla descrizione, non cambia rinominando).
 //   2) NOME normalizzato IDENTICO (ignora maiuscole/accenti/punteggiatura).
 //   3) NOME simile entro la soglia refusi, SOLO se non ambiguo (un solo nome ai minimi e
 //      nettamente più vicino del successivo) → evita di agganciare il lead sbagliato.
-// A parità di candidato vince il T0 più recente. Il titolo evento può cambiare dopo l'invio
-// del messaggio: il match per nome è volutamente tollerante ma non può essere 100%.
-function findLeadT0(lead, index) {
-    const cands = index.candidates || [];
+// A parità di candidato vince il T0 più recente. Restituisce una Date o null.
+function findLeadT0Auto(lead, candidates) {
+    const cands = candidates || [];
     const phone9 = leadPhone9(lead.telefono);
     const leadName = normalizeName((lead.nome || '') + ' ' + (lead.cognome || ''));
     const latest = (acc, t0) => (!acc || t0 > acc) ? t0 : acc;
@@ -1360,6 +1374,63 @@ function findLeadT0(lead, index) {
     return null;
 }
 
+// Migliore PROPOSTA per un lead quando l'automatico non aggancia (caso incerto): il
+// candidato col nome più vicino entro una soglia un filo più larga dell'auto (tol+1),
+// escludendo quelli già rifiutati ("dismissed"). A parità vince il T0 più recente.
+// Ritorna { id, label, t0 } oppure null.
+function bestLeadSuggestion(lead, candidates, dismissed) {
+    const leadName = normalizeName((lead.nome || '') + ' ' + (lead.cognome || ''));
+    if (!leadName) return null;
+    const skip = new Set(dismissed || []);
+    const suggTol = nameTypoTolerance(leadName.length) + 1; // un po' più tollerante dell'auto
+    let best = null, bestDist = Infinity;
+    (candidates || []).forEach(c => {
+        if (!c.nameNorm || (c.id && skip.has(c.id))) return;
+        const d = levenshtein(leadName, c.nameNorm);
+        if (d > suggTol) return;
+        if (d < bestDist || (d === bestDist && best && c.t0 > best.t0)) { bestDist = d; best = c; }
+    });
+    if (!best) return null;
+    return { id: best.id, label: `${best.nameDisplay} · ${fmtLeadEventWhen(best.t0)}`, t0: best.t0 };
+}
+
+// Risolve il T0 di un lead tenendo conto degli agganci manuali e delle proposte.
+// Ritorna { status, t0, suggestion }:
+//   'manual'  = orario impostato a mano    | 'bound' = agganciato a mano a un evento
+//   'auto'    = match automatico            | 'suggest' = proposta da confermare
+//   'none'    = nessun aggancio possibile
+// NB: NON scrive mai (il render non tocca il cloud). Gli agganci "stale" sono solo ignorati.
+function resolveLeadT0(lead, candidates, binding) {
+    binding = binding || {};
+    if (binding.manualT0) {
+        const d = new Date(binding.manualT0);
+        if (!isNaN(d.getTime())) return { status: 'manual', t0: d, suggestion: null };
+    }
+    if (binding.eventId) {
+        const c = (candidates || []).find(x => x.id === binding.eventId);
+        if (c) return { status: 'bound', t0: c.t0, suggestion: null };
+        // evento sparito da Calendar: ignoro l'aggancio e proseguo
+    }
+    const autoT0 = findLeadT0Auto(lead, candidates);
+    if (autoT0) return { status: 'auto', t0: autoT0, suggestion: null };
+    const sugg = bestLeadSuggestion(lead, candidates, binding.dismissed);
+    if (sugg) return { status: 'suggest', t0: null, suggestion: sugg };
+    return { status: 'none', t0: null, suggestion: null };
+}
+
+// "gg/mm hh:mm" per mostrare quando cade un evento.
+function fmtLeadEventWhen(t0) {
+    if (!t0) return '';
+    return t0.toLocaleString('it-IT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// Escape minimale per testo dinamico (nomi) dentro HTML/attributi.
+function escLeadHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // hh:mm (24h) di T0 + offsetH ore. '' se non c'è T0.
 function leadStepTime(t0, offsetH) {
     if (!t0 || offsetH === null) return '';
@@ -1367,16 +1438,17 @@ function leadStepTime(t0, offsetH) {
     return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-// HTML del blocco checklist per una singola card lead.
-function renderLeadChecklist(leadKey, t0) {
+// HTML del blocco checklist per una singola card lead. `resolution` = output di resolveLeadT0.
+function renderLeadChecklist(leadKey, resolution) {
     const state = leadChecklistState[leadKey] || {};
     const keyAttr = encodeURIComponent(leadKey); // sicuro come valore di data-attribute
-    const noT0 = !t0;
+    const t0 = resolution.t0;
+    const status = resolution.status;
 
+    // Righe del funnel (orari da T0; "—" se T0 non c'è)
     let rows = '';
     LEAD_CHECKLIST_STEPS.forEach(step => {
         const checked = (state[step.key] !== undefined) ? state[step.key] : (step.defaultChecked || false);
-        // Orario: solo per le righe con offset. Se manca T0 mostro "—" (mai orari inventati).
         let timeHtml = '';
         if (step.offsetH !== null) {
             const t = leadStepTime(t0, step.offsetH);
@@ -1390,15 +1462,72 @@ function renderLeadChecklist(leadKey, t0) {
                     </label>`;
     });
 
-    const hint = noT0
-        ? `<span class="lead-checklist-hint" title="Nessun evento Calendar 'LEAD - Call' agganciato a questo lead">T0 n/d</span>`
-        : '';
+    // Etichetta di stato accanto al titolo
+    let tag = '';
+    if (status === 'manual') tag = `<span class="lead-checklist-tag" title="Orario impostato a mano">📌 manuale</span>`;
+    else if (status === 'bound') tag = `<span class="lead-checklist-tag" title="Agganciato a mano a un evento">📌 agganciato</span>`;
+    else if (status === 'none') tag = `<span class="lead-checklist-hint" title="Nessun evento 'LEAD - Call' agganciato a questo lead">T0 n/d</span>`;
+
+    // Banner di proposta (caso incerto): chiede conferma all'utente
+    let banner = '';
+    if (status === 'suggest' && resolution.suggestion) {
+        const s = resolution.suggestion;
+        const idAttr = encodeURIComponent(s.id || '');
+        banner = `
+                    <div class="lead-suggest">
+                        <span class="lead-suggest-q">⚠️ Forse è questo: <strong>${escLeadHtml(s.label)}</strong></span>
+                        <span class="lead-suggest-actions">
+                            <button type="button" class="lead-btn lead-btn-yes" data-lead-action="confirm" data-lead-key="${keyAttr}" data-event-id="${idAttr}">È lei ✓</button>
+                            <button type="button" class="lead-btn lead-btn-no" data-lead-action="reject" data-lead-key="${keyAttr}" data-event-id="${idAttr}">Non è lei ✗</button>
+                        </span>
+                    </div>`;
+    }
+
+    // Link "ricontrollo manuale" sempre presente (anche sui match automatici)
+    const changeLabel = (status === 'none') ? 'scegli evento' : 'evento sbagliato? cambia';
+    const changeLink = `<button type="button" class="lead-change-link" data-lead-action="open-picker" data-lead-key="${keyAttr}">${changeLabel}</button>`;
 
     return `
                 <div class="lead-checklist">
-                    <div class="lead-checklist-title"><i class="fas fa-list-check"></i> Funnel conferma ${hint}</div>
+                    <div class="lead-checklist-title">
+                        <span><i class="fas fa-list-check"></i> Funnel conferma ${tag}</span>
+                        ${changeLink}
+                    </div>
+                    ${banner}
                     ${rows}
+                    ${renderLeadPicker(leadKey, keyAttr)}
                 </div>`;
+}
+
+// Pannello (nascosto) per agganciare il lead a un evento "LEAD - Call" o impostare il T0 a mano.
+function renderLeadPicker(leadKey, keyAttr) {
+    const binding = leadBindings[leadKey] || {};
+    const hasBinding = !!(binding.eventId || binding.manualT0);
+    const opts = (leadSectionCandidates || [])
+        .slice()
+        .sort((a, b) => b.t0 - a.t0)
+        .map(c => `<option value="${encodeURIComponent(c.id || '')}">${escLeadHtml(c.nameDisplay)} — ${fmtLeadEventWhen(c.t0)}</option>`)
+        .join('');
+
+    return `
+                    <div class="lead-picker" data-lead-key="${keyAttr}" hidden>
+                        <div class="lead-picker-row">
+                            <select class="lead-picker-select">
+                                <option value="">— scegli un evento "LEAD - Call" —</option>
+                                ${opts}
+                            </select>
+                            <button type="button" class="lead-btn" data-lead-action="bind" data-lead-key="${keyAttr}">Aggancia</button>
+                        </div>
+                        <div class="lead-picker-row">
+                            <span class="lead-picker-or">oppure orario a mano:</span>
+                            <input type="datetime-local" class="lead-picker-dt">
+                            <button type="button" class="lead-btn" data-lead-action="manual" data-lead-key="${keyAttr}">Imposta</button>
+                        </div>
+                        <div class="lead-picker-row lead-picker-foot">
+                            ${hasBinding ? `<button type="button" class="lead-link-muted" data-lead-action="reset" data-lead-key="${keyAttr}">↺ ripristina automatico</button>` : ''}
+                            <button type="button" class="lead-link-muted" data-lead-action="close" data-lead-key="${keyAttr}">chiudi</button>
+                        </div>
+                    </div>`;
 }
 
 // Toggle di una checkbox: aggiorna lo stato e lo persiste su Drive (stesso meccanismo dei dati lead).
@@ -1418,6 +1547,91 @@ async function toggleLeadChecklistStep(leadKey, step, checked) {
     }
 }
 window.toggleLeadChecklistStep = toggleLeadChecklistStep;
+
+// Persiste gli agganci manuali su Drive (stesso meccanismo dei dati lead).
+async function saveLeadBindings() {
+    if (window.DriveStorage && window.accessToken) {
+        try {
+            await window.DriveStorage.save(STORAGE_KEYS.LEAD_BINDINGS, leadBindings);
+            console.log('💾 [Lead] Agganci salvati');
+        } catch (e) {
+            console.error('❌ [Lead] Salvataggio agganci fallito:', e);
+        }
+    } else {
+        console.warn('⚠️ [Lead] Non loggato: aggancio non salvato su cloud.');
+    }
+}
+
+// Riapre il pannello picker di un lead dopo un re-render (per "Non è lei" → scegli da lista).
+function openPickerFor(leadKey) {
+    const listContainer = document.getElementById('leadList');
+    const picker = listContainer?.querySelector(`.lead-picker[data-lead-key="${encodeURIComponent(leadKey)}"]`);
+    if (picker) picker.hidden = false;
+}
+
+// Gestisce i click sulle azioni del funnel (proposte, picker, aggancio manuale).
+async function handleLeadAction(btn) {
+    const action = btn.dataset.leadAction;
+    const leadKey = btn.dataset.leadKey ? decodeURIComponent(btn.dataset.leadKey) : null;
+    const eventId = btn.dataset.eventId ? decodeURIComponent(btn.dataset.eventId) : null;
+    const card = btn.closest('.cronologia-item');
+
+    // Azioni di sola UI (nessun salvataggio)
+    if (action === 'open-picker' || action === 'close') {
+        const picker = card?.querySelector('.lead-picker');
+        if (picker) picker.hidden = (action === 'close') ? true : !picker.hidden;
+        return;
+    }
+    if (!leadKey) return;
+
+    const b = leadBindings[leadKey] || (leadBindings[leadKey] = {});
+
+    if (action === 'confirm') {
+        b.eventId = eventId; delete b.manualT0;
+    } else if (action === 'reject') {
+        b.dismissed = b.dismissed || [];
+        if (eventId && !b.dismissed.includes(eventId)) b.dismissed.push(eventId);
+    } else if (action === 'bind') {
+        const sel = card?.querySelector('.lead-picker-select');
+        const val = sel && sel.value ? decodeURIComponent(sel.value) : '';
+        if (!val) { showNotification('Scegli un evento dalla lista', 'warning'); return; }
+        b.eventId = val; delete b.manualT0;
+    } else if (action === 'manual') {
+        const dt = card?.querySelector('.lead-picker-dt');
+        const val = dt && dt.value ? dt.value : '';
+        if (!val) { showNotification('Inserisci data e ora', 'warning'); return; }
+        b.manualT0 = val; delete b.eventId;
+    } else if (action === 'reset') {
+        delete leadBindings[leadKey];
+    } else {
+        return;
+    }
+
+    await saveLeadBindings();
+    renderLeadList();
+    // Dopo un "Non è lei" riapro il picker così l'utente sceglie da lista (o imposta a mano)
+    if (action === 'reject') openPickerFor(leadKey);
+}
+
+// Aggancia (una volta sola) la delega eventi sul contenitore #leadList, che resta lo stesso
+// elemento tra un render e l'altro: così i listener sopravvivono ai re-render.
+function ensureLeadDelegation(listContainer) {
+    if (listContainer._leadDelegationAttached) return;
+    listContainer._leadDelegationAttached = true;
+
+    listContainer.addEventListener('change', (e) => {
+        const cb = e.target.closest && e.target.closest('.lead-check-row input[type="checkbox"]');
+        if (!cb) return;
+        const leadKey = decodeURIComponent(cb.dataset.leadKey);
+        cb.closest('.lead-check-row')?.classList.toggle('done', cb.checked);
+        toggleLeadChecklistStep(leadKey, cb.dataset.step, cb.checked);
+    });
+
+    listContainer.addEventListener('click', (e) => {
+        const btn = e.target.closest && e.target.closest('[data-lead-action]');
+        if (btn && listContainer.contains(btn)) handleLeadAction(btn);
+    });
+}
 
 // ===== SEZIONE LEAD (vista aggregata della cronologia, raggruppata per lead) =====
 async function loadLeadSection() {
@@ -1466,8 +1680,19 @@ async function loadLeadSection() {
         }
     }
 
-    // v2.5.55: indice T0 dagli eventi Calendar "LEAD - Call" già sincronizzati in localStorage.
-    const leadCallIndex = buildLeadCallIndex();
+    // v2.5.57: agganci manuali lead↔evento (cloud/Drive). Come la checklist: il render non scrive mai.
+    leadBindings = {};
+    if (window.DriveStorage) {
+        try {
+            const savedB = await window.DriveStorage.load(STORAGE_KEYS.LEAD_BINDINGS);
+            if (savedB && typeof savedB === 'object') leadBindings = savedB;
+        } catch (error) {
+            console.error('❌ Errore caricamento agganci lead:', error);
+        }
+    }
+
+    // v2.5.55/57: candidati T0 dagli eventi "LEAD - Call" già sincronizzati in localStorage.
+    leadSectionCandidates = buildLeadCallIndex().candidates;
 
     // Raggruppa per lead: chiave = telefono (solo cifre) se presente, altrimenti nome+cognome
     const leadsMap = {};
@@ -1497,6 +1722,17 @@ async function loadLeadSection() {
     // Lead dal contatto più recente al più vecchio
     leads.sort((a, b) => b.ultimoContatto - a.ultimoContatto);
 
+    // Tieni i dati in memoria e renderizza (i re-render successivi NON riscaricano da Drive).
+    leadSectionLeads = leads;
+    renderLeadList();
+}
+
+// Render della lista lead dai dati già in memoria: dopo una scelta utente (conferma/aggancio/
+// orario a mano) basta richiamare questa, senza riscaricare nulla da Drive.
+function renderLeadList() {
+    const listContainer = document.getElementById('leadList');
+    if (!listContainer) return;
+
     // Etichette leggibili per i tipi messaggio (id template); fallback per tipi sconosciuti
     const tipoLabels = {
         'primo_messaggio': '💬 Primo messaggio',
@@ -1513,7 +1749,7 @@ async function loadLeadSection() {
     };
 
     let html = '';
-    leads.forEach(lead => {
+    leadSectionLeads.forEach(lead => {
         const nomeCompleto = (`${lead.nome} ${lead.cognome || ''}`).trim() || 'Lead senza nome';
         const telefono = lead.telefono || '—';
         const count = lead.messaggi.length;
@@ -1535,9 +1771,9 @@ async function loadLeadSection() {
             `;
         });
 
-        // v2.5.55: blocco funnel-conferma (5 step con checkbox). T0 = inizio evento "LEAD - Call".
-        const t0 = findLeadT0(lead, leadCallIndex);
-        const checklistHtml = renderLeadChecklist(lead._key, t0);
+        // v2.5.55/57: blocco funnel-conferma. Risolve T0 con agganci manuali + automatico + proposte.
+        const resolution = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
+        const checklistHtml = renderLeadChecklist(lead._key, resolution);
 
         html += `
             <div class="cronologia-item">
@@ -1558,14 +1794,8 @@ async function loadLeadSection() {
 
     listContainer.innerHTML = html;
 
-    // v2.5.55: aggancia i toggle delle checkbox (event delegation dopo l'innerHTML).
-    listContainer.querySelectorAll('.lead-check-row input[type="checkbox"]').forEach(cb => {
-        cb.addEventListener('change', () => {
-            const leadKey = decodeURIComponent(cb.dataset.leadKey);
-            cb.closest('.lead-check-row')?.classList.toggle('done', cb.checked);
-            toggleLeadChecklistStep(leadKey, cb.dataset.step, cb.checked);
-        });
-    });
+    // v2.5.57: delega eventi agganciata una sola volta sul contenitore (sopravvive ai re-render).
+    ensureLeadDelegation(listContainer);
 }
 
 // ===== ULTIMO MESSAGGIO =====

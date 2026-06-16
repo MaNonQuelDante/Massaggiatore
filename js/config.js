@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.56',
-    fullName: 'v2.5.56 by Dante',
+    version: '2.5.57',
+    fullName: 'v2.5.57 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Funnel conferma lead, match più robusto. T0 = inizio evento "LEAD - Call", riconosciuto sia come TITOLO evento sia come NOME del CALENDARIO. Aggancio card↔evento: 1) telefono (ultime 9 cifre, dalla descrizione: non cambia se rinomini l’evento dopo l’invio), 2) nome normalizzato identico (ignora maiuscole/accenti/punteggiatura), 3) nome simile entro soglia refusi (Levenshtein) ma SOLO se non ambiguo. Niente match → orari "—" + badge "T0 n/d", mai orari inventati.'
+    lastUpdate: '2026-06-16 - Funnel lead: quando il match è incerto il sito CHIEDE. Caso dubbio → banner "Forse è questo: <nome> · <data ora> [È lei ✓] [Non è lei ✗]". Su OGNI card (anche match automatici) link "evento sbagliato? cambia" che apre un selettore di tutti gli eventi "LEAD - Call" o consente di impostare il T0 a mano (data+ora). Le scelte sono salvate su Drive (LEAD_BINDINGS) e ricordate (chiesto una volta sola; anche i "no"). Match certi (telefono/nome esatto) restano automatici e silenziosi.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
