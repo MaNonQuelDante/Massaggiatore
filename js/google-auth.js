@@ -1,6 +1,19 @@
 /* ================================================================================
-   GOOGLE AUTH - VERSIONE 2.5.17
-   
+   GOOGLE AUTH - VERSIONE 2.5.18
+
+   CHANGELOG 2.5.18 (LOGIN PERSISTENTE / SILENT RENEWAL):
+   - ✅ tryRestoreSession(): al caricamento usa il token valido salvato, oppure
+     tenta un rinnovo silenzioso (prompt:'') se scaduto/assente → niente popup
+     ai refresh successivi al primo login
+   - ✅ requestSilentRenewal(): rinnovo token senza UI tramite tokenClient esistente
+   - ✅ requestExplicitLogin(): popup pieno SOLO al primo login o dopo revoca
+     (handleAuthClick è ora un wrapper che la richiama dal click del pulsante)
+   - ✅ Fallback corretto: se il rinnovo silenzioso fallisce NON si forza un popup
+     (i browser lo bloccano senza gesto utente) → si mostra il pulsante di login
+   - ✅ Auto-refresh (30min) e keep-alive (25min) ora passano da requestSilentRenewal
+     per logica unica
+   - ✅ Rimossa restoreTokenFromStorage() (sostituita da tryRestoreSession + useRestoredToken)
+
    CHANGELOG 2.5.17:
    - ✅ FIX: Rimosso export duplicato saveContactToGoogle (causava errore undefined)
    - ✅ La funzione è esportata correttamente da rubrica.js
@@ -80,6 +93,16 @@ let gapiInited = false;
 let gisInited = false;
 let userProfileData = null;
 let authDebugMode = localStorage.getItem('sgmess_debug_mode') === 'true';
+
+// ===== v2.5.18: STATO SESSIONE PERSISTENTE =====
+const TOKEN_KEY = 'google_access_token';
+const TOKEN_EXPIRES_KEY = 'google_token_expires_at';
+const TOKEN_EXPIRY_MARGIN_MS = 60 * 1000; // margine di 60s prima della scadenza reale
+// Distingue un rinnovo SILENZIOSO (prompt:'') da un login ESPLICITO (popup):
+// serve a handleAuthError/handleAuthResponse per scegliere il fallback giusto.
+let silentRenewalInProgress = false;
+// Evita ripristini doppi: maybeEnableButtons può essere chiamata più volte.
+let sessionRestoreAttempted = false;
 
 // ===== RIMOSSE FUNZIONI SETUP WIZARD (v2.2.7) =====
 // per eliminare messaggi di errore OAuth visibili all'utente
@@ -182,20 +205,29 @@ function maybeEnableButtons() {
             logDebug('✅ Pulsante login abilitato');
         }
         
-        // ===== RIPRISTINA TOKEN DA localStorage =====
-        // Solo alla prima volta (quando entrambi gapi e gis sono pronti)
-        if (!window.accessToken) {
-            console.log('🔄 Tentativo ripristino token da localStorage...');
-            const restored = restoreTokenFromStorage();
-            if (!restored) {
-                console.log('ℹ️ Nessun token salvato o token scaduto');
-            }
+        // ===== v2.5.18: RIPRISTINO SESSIONE =====
+        // Solo alla prima volta (quando entrambi gapi e gis sono pronti).
+        // tryRestoreSession decide da solo: token valido → uso diretto,
+        // altrimenti rinnovo silenzioso senza popup.
+        if (!window.accessToken && !sessionRestoreAttempted) {
+            sessionRestoreAttempted = true;
+            console.log('🔄 Ripristino sessione...');
+            tryRestoreSession();
         }
     }
 }
 
 // ===== AUTH =====
+// v2.5.18: wrapper mantenuto per il listener del pulsante "Accedi con Google"
 function handleAuthClick() {
+    requestExplicitLogin();
+}
+
+// ===== v2.5.18: LOGIN ESPLICITO (POPUP) =====
+// Popup pieno per il PRIMO login o per il recupero dopo revoca/sessione persa.
+// DEVE partire da un gesto utente (click), altrimenti il browser blocca il popup.
+function requestExplicitLogin() {
+    silentRenewalInProgress = false; // questo è un login esplicito, non silenzioso
     try {
         console.log('🔐 Richiesta autenticazione...');
         console.log('📍 Current Origin:', window.location.origin);
@@ -280,6 +312,16 @@ function handleAuthClick() {
 
 // ===== ERROR HANDLER =====
 function handleAuthError(error) {
+    // v2.5.18: se era un rinnovo SILENZIOSO, fallire è normale (sessione Google
+    // non attiva, consenso revocato, o ITP di Safari). Niente errori rumorosi:
+    // si mostra solo il pulsante di login, il popup parte al click dell'utente.
+    if (silentRenewalInProgress) {
+        silentRenewalInProgress = false;
+        console.log('ℹ️ Rinnovo silenzioso non riuscito → mostro pulsante login (serve un click)');
+        onSilentRenewalFailed();
+        return;
+    }
+
     console.error('❌ Errore autenticazione Google:', error);
     logDebug('❌ Errore autenticazione', error);
     
@@ -350,15 +392,28 @@ function handleAuthError(error) {
 
 // ===== RESPONSE HANDLER =====
 async function handleAuthResponse(resp) {
+    // v2.5.18: capisci se questo token arriva da un rinnovo silenzioso
+    const wasSilent = silentRenewalInProgress;
+    silentRenewalInProgress = false;
+
     if (resp.error !== undefined) {
         console.error('❌ Errore auth:', resp.error, resp);
         logDebug('❌ Errore auth response', resp);
+        if (wasSilent) {
+            console.log('ℹ️ Rinnovo silenzioso fallito (resp.error) → mostro pulsante login');
+            onSilentRenewalFailed();
+            return;
+        }
         updateGoogleUIStatus(false);
-        
+
         // Silent fail - no wizard
         return;
     }
-    
+
+    if (wasSilent) {
+        console.log('🔄 Rinnovo silenzioso riuscito: nuovo token ottenuto senza popup');
+    }
+
     accessToken = resp.access_token;
     window.accessToken = accessToken;
     
@@ -431,8 +486,8 @@ function setupTokenAutoRefresh(expiresIn) {
             
             if (tokenClient) {
                 try {
-                    // Richiesta silente (nessun popup)
-                    tokenClient.requestAccessToken({ prompt: '' });
+                    // v2.5.18: rinnovo silenzioso unificato
+                    requestSilentRenewal();
                     console.log('✅ Token refresh richiesto');
                     tokenRefreshAttempts = 0; // Reset contatore tentativi
                 } catch (error) {
@@ -447,7 +502,7 @@ function setupTokenAutoRefresh(expiresIn) {
                         setTimeout(() => {
                             if (tokenClient) {
                                 try {
-                                    tokenClient.requestAccessToken({ prompt: '' });
+                                    requestSilentRenewal(); // v2.5.18: rinnovo silenzioso unificato
                                 } catch (retryError) {
                                     console.error('❌ Retry fallito:', retryError);
                                 }
@@ -493,11 +548,9 @@ function setupKeepAliveTimer() {
             if (response.ok) {
                 console.log('✅ Keep-alive: sessione attiva');
             } else if (response.status === 401) {
-                console.warn('⚠️ Keep-alive: token scaduto, forzo refresh...');
-                // Token scaduto, forza refresh
-                if (tokenClient) {
-                    tokenClient.requestAccessToken({ prompt: '' });
-                }
+                console.warn('⚠️ Keep-alive: token scaduto, forzo rinnovo silenzioso...');
+                // v2.5.18: rinnovo silenzioso unificato
+                requestSilentRenewal();
             }
         } catch (error) {
             console.warn('⚠️ Keep-alive fallito:', error);
@@ -507,65 +560,115 @@ function setupKeepAliveTimer() {
     console.log('⏰ Keep-alive impostato (ogni 25 minuti)');
 }
 
-// ===== RIPRISTINA TOKEN DA localStorage ALL'AVVIO =====
-function restoreTokenFromStorage() {
+// ===== v2.5.18: RIPRISTINO SESSIONE AL CARICAMENTO =====
+// Chiamata da maybeEnableButtons quando gapi+gis sono pronti.
+//  1) token valido in localStorage → usa direttamente (nessun popup)
+//  2) scaduto/assente → tenta il rinnovo silenzioso (prompt:'')
+//  3) il fallback al pulsante di login è gestito da handleAuthError (vedi sopra)
+function tryRestoreSession() {
+    let savedToken = null;
+    let expiresAt = 0;
     try {
-        const savedToken = localStorage.getItem('google_access_token');
-        const expiresAt = parseInt(localStorage.getItem('google_token_expires_at') || '0');
-        
-        if (savedToken && Date.now() < expiresAt) {
-            // Token ancora valido
-            accessToken = savedToken;
-            window.accessToken = savedToken;
-            
-            const remainingMinutes = Math.floor((expiresAt - Date.now()) / 60000);
-            console.log(`✅ Token ripristinato da localStorage (valido per altri ${remainingMinutes} minuti)`);
-            logDebug('✅ Token ripristinato', { remainingMinutes });
-            
-            // Setup auto-refresh
-            const remainingSeconds = Math.floor((expiresAt - Date.now()) / 1000);
-            setupTokenAutoRefresh(remainingSeconds);
-            
-            // 🔥 v2.5.16: Setup keep-alive anche al ripristino
-            setupKeepAliveTimer();
-            
-            // Carica user info e aggiorna UI
-            (async () => {
-                try {
-                    const userInfo = await getUserInfo();
-                    userProfileData = userInfo;
-                    showUserInfo(userInfo);
-                    updateGoogleUIStatus(true, userInfo);
-                    console.log('✅ Auto-login completato:', userInfo);
-                    
-                    // Sincronizza calendario silenziosamente
-                    if (window.syncCalendarEvents) {
-                        setTimeout(() => {
-                            window.syncCalendarEvents(true); // silent = true
-                        }, 1000);
-                    }
-                } catch (error) {
-                    console.warn('⚠️ Token non più valido, rimuovo localStorage');
-                    localStorage.removeItem('google_access_token');
-                    localStorage.removeItem('google_token_expires_at');
-                    accessToken = null;
-                    window.accessToken = null;
-                }
-            })();
-            
-            return true;
-        } else {
-            // Token scaduto o non presente
-            if (savedToken) {
-                console.log('⚠️ Token scaduto, rimuovo da localStorage');
-                localStorage.removeItem('google_access_token');
-                localStorage.removeItem('google_token_expires_at');
-            }
-            return false;
-        }
+        savedToken = localStorage.getItem(TOKEN_KEY);
+        expiresAt = parseInt(localStorage.getItem(TOKEN_EXPIRES_KEY) || '0', 10);
     } catch (e) {
-        console.error('❌ Errore ripristino token:', e);
-        return false;
+        // Es. Safari iOS in Navigazione Privata: localStorage non persiste.
+        console.warn('⚠️ localStorage non accessibile, salto al rinnovo silenzioso:', e);
+    }
+
+    // CASO 1: token ancora valido (con margine) → usa subito
+    if (savedToken && Date.now() < (expiresAt - TOKEN_EXPIRY_MARGIN_MS)) {
+        const remainingMinutes = Math.floor((expiresAt - Date.now()) / 60000);
+        console.log(`✅ Token valido ripristinato da localStorage (altri ${remainingMinutes} min)`);
+        logDebug('✅ Token ripristinato', { remainingMinutes });
+        useRestoredToken(savedToken, expiresAt);
+        return;
+    }
+
+    // CASO 2: scaduto o assente → rinnovo silenzioso
+    console.log(savedToken
+        ? '🔄 Token scaduto: tento rinnovo silenzioso...'
+        : '🔄 Nessun token salvato: tento rinnovo silenzioso...');
+    requestSilentRenewal();
+}
+
+// ===== v2.5.18: USA UN TOKEN VALIDO GIÀ PRESENTE =====
+function useRestoredToken(token, expiresAt) {
+    accessToken = token;
+    window.accessToken = token;
+
+    // Setup timer (auto-refresh + keep-alive) sul tempo residuo
+    const remainingSeconds = Math.floor((expiresAt - Date.now()) / 1000);
+    setupTokenAutoRefresh(remainingSeconds);
+    setupKeepAliveTimer();
+
+    // Carica user info e aggiorna UI
+    (async () => {
+        try {
+            const userInfo = await getUserInfo();
+            userProfileData = userInfo;
+            showUserInfo(userInfo);
+            updateGoogleUIStatus(true, userInfo);
+            console.log('✅ Auto-login completato:', userInfo);
+
+            // Sincronizza calendario silenziosamente
+            if (window.syncCalendarEvents) {
+                setTimeout(() => window.syncCalendarEvents(true), 1000);
+            }
+            if (window.setTodayDate) window.setTodayDate();
+        } catch (error) {
+            // Token rifiutato dall'API (revocato/non valido): pulisci e prova
+            // un rinnovo silenzioso invece di lasciare l'utente sloggato.
+            console.warn('⚠️ Token non valido all\'uso: pulisco e tento rinnovo silenzioso');
+            clearStoredToken();
+            accessToken = null;
+            window.accessToken = null;
+            requestSilentRenewal();
+        }
+    })();
+}
+
+// ===== v2.5.18: RINNOVO SILENZIOSO (NESSUN POPUP SE GIÀ AUTORIZZATO) =====
+// Usa il tokenClient esistente con prompt:'' (stringa vuota = silenzioso).
+// Se la sessione Google è attiva e il consenso è già stato dato, Google
+// restituisce un nuovo access_token SENZA popup né caselle.
+function requestSilentRenewal() {
+    if (!tokenClient) {
+        console.warn('⚠️ tokenClient non pronto: rinnovo silenzioso non avviato');
+        onSilentRenewalFailed();
+        return;
+    }
+    try {
+        silentRenewalInProgress = true;
+        console.log('🔄 Rinnovo silenzioso in corso (prompt vuoto)...');
+        tokenClient.requestAccessToken({ prompt: '' });
+    } catch (error) {
+        silentRenewalInProgress = false;
+        console.warn('⚠️ Rinnovo silenzioso non avviato:', error);
+        onSilentRenewalFailed();
+    }
+}
+
+// ===== v2.5.18: FALLBACK QUANDO IL RINNOVO SILENZIOSO FALLISCE =====
+// IMPORTANTE: NON apriamo un popup automatico qui. Senza un gesto utente il
+// browser lo bloccherebbe. Mostriamo il pulsante "Accedi con Google"; il popup
+// (requestExplicitLogin) parte al click dell'utente.
+function onSilentRenewalFailed() {
+    accessToken = null;
+    window.accessToken = null;
+    hideUserInfo();            // ri-mostra il pulsante di login
+    updateGoogleUIStatus(false);
+    const btn = document.getElementById('googleSignInBtn');
+    if (btn) btn.disabled = false;
+}
+
+// ===== v2.5.18: PULIZIA TOKEN SALVATO =====
+function clearStoredToken() {
+    try {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(TOKEN_EXPIRES_KEY);
+    } catch (e) {
+        /* localStorage non disponibile: ignora */
     }
 }
 
@@ -1076,4 +1179,4 @@ function setAssistenteToggle(gender) {
 window.checkSetterGenderFromEvent = checkSetterGenderFromEvent;
 window.extractSetterFromEvent = extractSetterFromEvent;
 
-console.log('✅ Google Auth v2.5.17 - OAuth funzionante + Keep-alive ottimizzato');
+console.log('🔐 Google Auth v2.5.18 - Login persistente: silent renewal al load + auto-refresh unificato');

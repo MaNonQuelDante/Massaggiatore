@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.46',
-    fullName: 'v2.5.46 by Dante',
+    version: '2.5.47',
+    fullName: 'v2.5.47 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Modalità videochiamata letta dall\'evento ("Tipo di call: Whatsapp" → WhatsApp, altro → Link) + FIX toggle Link/WhatsApp che perdeva il colore alla selezione del lead + default Link quando nessun lead è selezionato'
+    lastUpdate: '2026-06-16 - Login Google persistente: rinnovo silenzioso al caricamento (tryRestoreSession + requestSilentRenewal), popup solo al primo login o dopo revoca, auto-refresh/keep-alive unificati (google-auth modulo v2.5.18)'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

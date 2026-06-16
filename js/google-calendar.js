@@ -52,7 +52,7 @@ let isFormProgrammaticUpdate = false; // v2.5.19: Flag per evitare re-trigger de
 // ===== AUTH GUARD (v2.5.45) =====
 // True se c'è una sessione Google valida: token in memoria OPPURE token salvato
 // non ancora scaduto. Il secondo caso copre il ripristino ASINCRONO all'avvio
-// (maybeEnableButtons → restoreTokenFromStorage gira dopo il DOMContentLoaded),
+// (maybeEnableButtons → tryRestoreSession gira dopo il DOMContentLoaded),
 // così un utente GIÀ loggato vede subito i calendari senza un lampeggio del
 // "lucchetto"; un utente NON loggato (o con token scaduto) non vede nulla.
 function isGoogleAuthenticated() {
