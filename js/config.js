@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.52',
-    fullName: 'v2.5.52 by Dante',
+    version: '2.5.53',
+    fullName: 'v2.5.53 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Allineato dominio reale: REDIRECT_URI, origin autorizzato e repo GitHub ora puntano a manonqueldante.github.io/Massaggiatore/ (il vecchio dantemanonquello.github.io/sgfemassdante era morto e generava il falso "Timeout autenticazione 10s"). Segue v2.5.51 (fix login persistente: setGapiToken aggancia il token a gapi.client → niente più re-login a ogni reload).'
+    lastUpdate: '2026-06-16 - Rimossa la pagina "Cronologia" dal menu (lo storico vive ora nella sezione "Lead"): tolti voce menu, pagina #cronologiaContent e relative righe del router; saveToCronologia e lo storage CRONOLOGIA restano (servono alla sezione Lead). Aggiunto bottone WhatsApp diretto (wa.me) su ogni card lead.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

@@ -139,7 +139,6 @@ async function showPage(page) {
         'riconferme': 'riconfermeContent',
         'calendario': 'calendarioContent',
         'messaggi': 'messaggiContent',
-        'cronologia': 'cronologiaContent',
         'lead': 'leadContent',
         'rubrica': 'rubricaContent',
         'importante': 'importanteContent'
@@ -157,7 +156,6 @@ async function showPage(page) {
         document.getElementById(targetPage).style.display = 'block';
         
         // Carica contenuto specifico
-        if (page === 'cronologia') await loadCronologia();
         if (page === 'lead') await loadLeadSection();
         if (page === 'messaggi') loadMessaggiList();
         if (page === 'calendario' && window.displayCalendarView) displayCalendarView();
@@ -1315,6 +1313,7 @@ async function loadLeadSection() {
                     <strong>${nomeCompleto}</strong>
                     <span style="font-size: 13px; color: var(--gray-500);">
                         <i class="fas fa-phone"></i> ${telefono} · ${count} ${count === 1 ? 'azione' : 'azioni'}
+                        ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
                     </span>
                 </div>
                 <div class="lead-azioni">

@@ -9,14 +9,14 @@
     <!-- PRIVACY: blocco indicizzazione motori di ricerca (sito accessibile solo via link) -->
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
     <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
-    <title>Stock Gain Messenger - v2.5.52 by Dante</title>
+    <title>Stock Gain Messenger - v2.5.53 by Dante</title>
 
     <!-- Favicon e icone app (logo: mani in massaggio + sorriso, teal #128C7E) -->
     <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
     <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
     <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 
-    <link rel="stylesheet" href="css/style.css?v=2.5.52">
+    <link rel="stylesheet" href="css/style.css?v=2.5.53">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -51,9 +51,6 @@
             <a href="#" class="sidebar-link" data-page="messaggi">
                 <i class="fas fa-comment-dots"></i> Scheletro Messaggi
             </a>
-            <a href="#" class="sidebar-link" data-page="cronologia">
-                <i class="fas fa-history"></i> Cronologia
-            </a>
             <a href="#" class="sidebar-link" data-page="lead">
                 <i class="fas fa-user-tag"></i> Lead
             </a>
@@ -80,7 +77,7 @@
                 <!-- Titolo e Nome Operatore -->
                 <div class="header-text">
                     <h1 class="header-title">Stock Gain Messenger</h1>
-                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.52 by Dante">v2.5.52 by Dante</p>
+                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.53 by Dante">v2.5.53 by Dante</p>
                 </div>
                 
                 <!-- WhatsApp Icon -->
@@ -516,26 +513,6 @@
         </div>
 
         <!-- ========================================
-             PAGINA CRONOLOGIA
-        ======================================== -->
-        <div id="cronologiaContent" class="page-content" style="display: none;">
-            <div class="card">
-                <div class="card-title">
-                    <i class="fas fa-history"></i> Cronologia Messaggi
-                </div>
-                <!-- v2.5.50: selettore data (default oggi). I messaggi sono salvati 100% su cloud (Google Drive). -->
-                <div class="cronologia-toolbar">
-                    <label for="cronologiaDate"><i class="fas fa-calendar-day"></i> Data</label>
-                    <input type="date" id="cronologiaDate" class="cronologia-date-input">
-                    <button type="button" id="cronologiaTodayBtn" class="cronologia-today-btn">Oggi</button>
-                </div>
-                <div id="cronologiaList" class="cronologia-list">
-                    <p class="placeholder-text">Seleziona una data per vedere i messaggi inviati.</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- ========================================
              PAGINA LEAD (storico per lead)
         ======================================== -->
         <div id="leadContent" class="page-content" style="display: none;">
@@ -709,15 +686,15 @@
 
     <!-- Scripts -->
     <script src="js/nomi-italiani.js?v=2.5.29"></script>
-    <script src="js/config.js?v=2.5.52"></script>
-    <script src="js/google-auth.js?v=2.5.52"></script>
+    <script src="js/config.js?v=2.5.53"></script>
+    <script src="js/google-auth.js?v=2.5.53"></script>
     <script src="js/google-drive-storage.js?v=2.5.29"></script>
     <script src="js/google-sheets-assistenti.js?v=2.5.29"></script>
     <script src="js/google-calendar.js?v=2.5.47"></script>
     <script src="js/templates.js?v=2.5.29"></script>
     <script src="js/rubrica.js?v=2.5.29"></script>
     <script src="js/github-auto-push.js?v=2.5.29"></script>
-    <script src="js/main.js?v=2.5.52"></script>
+    <script src="js/main.js?v=2.5.53"></script>
     
     <!-- Google API Initialization -->
     <script>

@@ -823,6 +823,25 @@ body {
     gap: 8px;
 }
 
+/* v2.5.53: bottone WhatsApp diretto sulla card di ogni lead */
+.lead-wa-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 10px;
+    padding: 3px 10px;
+    background: var(--whatsapp-green);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.lead-wa-btn:hover {
+    background: var(--whatsapp-teal);
+}
+
 .lead-azione {
     display: flex;
     align-items: center;
