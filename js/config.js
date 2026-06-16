@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.58',
-    fullName: 'v2.5.58 by Dante',
+    version: '2.5.59',
+    fullName: 'v2.5.59 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - TASK 1: salvataggio AUTOMATICO del contatto in Google Contacts ad ogni invio messaggio (se il numero NON è già in rubrica, dedup su SAVED_CONTACTS). organizations.name = "FE - Lead"/"SG - Lead". Rimossa la vecchia lista "contatti da salvare"; nuovo form "Aggiungi numero" (Nome/Cognome/Numero/FE-SG/Società) + verifica numero in rubrica. FIX: checkAndSaveContact passava chiavi sbagliate (firstName/lastName/phone/company) a saveContactToGoogle → il salvataggio automatico non aveva mai funzionato. TASK 2: il campo created (ora di creazione evento Calendar ≈ prenotazione Acuity) ora viene PERSISTITO: prima il .map() di syncCalendar lo scartava. Aggiunto created/updated nella cache eventi, propagato nel record lead-contattato (eventCreated) e mostrato nella card calendario.'
+    lastUpdate: '2026-06-16 - Sezione Lead. (1) FIX persistenza spunte funnel-conferma: DRIVE_FILES non mappava LEAD_CHECKLIST/LEAD_BINDINGS → save/load fallivano in silenzio e le spunte si perdevano al reload; ora salvate in modo permanente in appDataFolder (testmess_lead_checklist.json / testmess_lead_bindings.json). leadKey già stabile (tel: cifre normalizzate). (2) Telefono in cima alla card mostrato con prefisso: 393394865982 → "+39 339 486 5982" (normalizza prima, niente +39 duplicato). (3) Footer card: rimosso il nome servizio ("Finanza Efficace"/"Stock Gain"), resta solo il tag FE - Lead / SG - Lead. (4) Bottone WhatsApp sulla riga "Inviare a Gruppo NoShow" → wa.me/393755588371 con testo precompilato (solo valori, uno per riga: nome cognome / data-ora appuntamento / telefono / nome assistente / primo nome account Google).'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

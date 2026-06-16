@@ -1265,6 +1265,20 @@ function leadPhone9(telefono) {
     return digits.length >= 9 ? digits.slice(-9) : '';
 }
 
+// v2.5.59: telefono lead → forma leggibile con prefisso internazionale, es.
+//   393394865982 → "+39 339 486 5982". Normalizza prima a sole cifre e toglie il 39/0039
+//   iniziale SOLO se è davvero un prefisso (numero più lungo di un nazionale a 10 cifre),
+//   così non duplica il +39 e non "mangia" un prefisso mobile 39x già nazionale.
+function formatLeadPhoneDisplay(telefono) {
+    let digits = (telefono || '').replace(/\D/g, '');
+    if (!digits) return telefono || '—';
+    if (digits.startsWith('0039')) digits = digits.slice(4);
+    else if (digits.startsWith('39') && digits.length > 10) digits = digits.slice(2);
+    // raggruppa il nazionale 3-3-resto (es. "339 486 5982"); se non combacia, lascia intero
+    const grouped = digits.replace(/^(\d{3})(\d{3})(\d+)$/, '$1 $2 $3');
+    return '+39 ' + grouped;
+}
+
 // Normalizza un nome per il confronto: minuscolo, senza accenti, solo lettere e spazi,
 // spazi compattati. Rende il match robusto a maiuscole/minuscole, accenti e punteggiatura.
 function normalizeName(str) {
@@ -1460,12 +1474,37 @@ function leadStepTime(t0, offsetH) {
     return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+// v2.5.59: destinatario fisso del bottone "Gruppo NoShow".
+const NOSHOW_WA_NUMBER = '393755588371';
+
+// v2.5.59: href WhatsApp per inoltrare il lead al "Gruppo NoShow". Il testo contiene SOLO
+// i valori, uno per riga, senza etichette:
+//   nome cognome lead / data e ora appuntamento / telefono lead / nome assistente / primo
+//   nome account Google. Stesse fonti già usate in card e messaggi. encodeURIComponent sul testo.
+function buildNoShowWaHref(lead, t0) {
+    const nomeCognome = (`${lead.nome || ''} ${lead.cognome || ''}`).trim();
+    const appuntamento = t0 ? fmtLeadEventWhen(t0) : '';
+    const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '';
+    // nome assistente: stessa fonte dei messaggi ({OPERATORE} = elemento #operatoreName)
+    const assistente = (document.getElementById('operatoreName')?.textContent || '').trim();
+    // primo nome dell'account Google loggato (es. "Dante Davide" → "Dante")
+    const googleName = (window.userProfileData && window.userProfileData()?.name)
+        || localStorage.getItem('sgmess_operator_name') || '';
+    const googleFirst = (googleName.split(' ')[0] || '').trim();
+    const testo = [nomeCognome, appuntamento, telefono, assistente, googleFirst].join('\n');
+    return `https://wa.me/${NOSHOW_WA_NUMBER}?text=${encodeURIComponent(testo)}`;
+}
+
 // HTML del blocco checklist per una singola card lead. `resolution` = output di resolveLeadT0.
-function renderLeadChecklist(leadKey, resolution) {
+function renderLeadChecklist(lead, resolution) {
+    const leadKey = lead._key;
     const state = leadChecklistState[leadKey] || {};
     const keyAttr = encodeURIComponent(leadKey); // sicuro come valore di data-attribute
     const t0 = resolution.t0;
     const status = resolution.status;
+
+    // v2.5.59: messaggio precompilato per il bottone WhatsApp della riga "noshow"
+    const noshowWaHref = buildNoShowWaHref(lead, t0);
 
     // Righe del funnel (orari da T0; "—" se T0 non c'è)
     let rows = '';
@@ -1476,12 +1515,23 @@ function renderLeadChecklist(leadKey, resolution) {
             const t = leadStepTime(t0, step.offsetH);
             timeHtml = `<span class="lc-time">${t || '—'}</span>`;
         }
-        rows += `
+        const rowHtml = `
                     <label class="lead-check-row${checked ? ' done' : ''}">
                         <input type="checkbox" data-lead-key="${keyAttr}" data-step="${step.key}"${checked ? ' checked' : ''}>
                         <span class="lc-label">${step.label}</span>
                         ${timeHtml}
                     </label>`;
+        // v2.5.59: sulla riga "noshow" affianco un bottone WhatsApp verso il Gruppo NoShow.
+        // È un <a> FUORI dalla <label> (sibling) così il click non spunta la casella.
+        if (step.key === 'noshow') {
+            rows += `
+                    <div class="lead-check-noshow">
+                        ${rowHtml}
+                        <a class="lead-wa-btn lead-noshow-wa" href="${noshowWaHref}" target="_blank" rel="noopener" title="Inoltra al Gruppo NoShow"><i class="fab fa-whatsapp"></i></a>
+                    </div>`;
+        } else {
+            rows += rowHtml;
+        }
     });
 
     // Etichetta di stato accanto al titolo
@@ -1773,7 +1823,7 @@ function renderLeadList() {
     let html = '';
     leadSectionLeads.forEach(lead => {
         const nomeCompleto = (`${lead.nome} ${lead.cognome || ''}`).trim() || 'Lead senza nome';
-        const telefono = lead.telefono || '—';
+        const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '—'; // v2.5.59: +39 339 486 5982
         const count = lead.messaggi.length;
 
         let azioniHtml = '';
@@ -1781,13 +1831,14 @@ function renderLeadList() {
             const d = new Date(msg.timestamp);
             const dateStr = d.toLocaleDateString('it-IT');
             const timeStr = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-            const servizio = msg.servizio ? ` · <i class="fas fa-briefcase"></i> ${msg.servizio}` : '';
+            // v2.5.59: il nome servizio ("Finanza Efficace"/"Stock Gain") serve solo ai
+            // messaggi/rubrica → rimosso da questa label. Resta solo il tag FE/SG - Lead.
             const societa = msg.societa ? ` · <i class="fas fa-building"></i> ${msg.societa}` : '';
             azioniHtml += `
                 <div class="lead-azione">
                     <span class="lead-tipo-badge">${tipoLabel(msg.tipoMessaggio)}</span>
                     <span class="lead-azione-meta">
-                        <i class="fas fa-clock"></i> ${dateStr} ${timeStr}${servizio}${societa}
+                        <i class="fas fa-clock"></i> ${dateStr} ${timeStr}${societa}
                     </span>
                 </div>
             `;
@@ -1795,7 +1846,7 @@ function renderLeadList() {
 
         // v2.5.55/57: blocco funnel-conferma. Risolve T0 con agganci manuali + automatico + proposte.
         const resolution = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
-        const checklistHtml = renderLeadChecklist(lead._key, resolution);
+        const checklistHtml = renderLeadChecklist(lead, resolution);
 
         html += `
             <div class="cronologia-item">

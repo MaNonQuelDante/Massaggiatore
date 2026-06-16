@@ -943,6 +943,21 @@ body {
     border-color: #bbf7d0;
 }
 
+/* v2.5.59: riga "noshow" con bottone WhatsApp affiancato (verso il Gruppo NoShow) */
+.lead-check-noshow {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+.lead-check-noshow .lead-check-row {
+    flex: 1;
+}
+.lead-noshow-wa {
+    margin-left: 0;        /* annulla il margin di .lead-wa-btn: qui c'è già il gap */
+    flex-shrink: 0;
+    padding: 0 14px;       /* alta quanto la riga della checklist */
+}
+
 .lead-check-row.done .lc-label {
     color: #166534;
     text-decoration: line-through;

@@ -15,7 +15,12 @@ const DRIVE_FILES = {
     OPERATOR_NAME: 'testmess_operator_name.json',
     CONTACTED_LEADS: 'testmess_contacted_leads.json', // ✅ NUOVO: Lead contattati persistenti
     HOME_SELECTED_CALENDARS: 'testmess_home_selected_calendars.json', // v2.5.44: selezione calendari home (sync su Drive)
-    ACTIVITY_LOG: 'testmess_activity_log.json' // v2.5.44: report di tutte le azioni
+    ACTIVITY_LOG: 'testmess_activity_log.json', // v2.5.44: report di tutte le azioni
+    // v2.5.59 FIX: questi due mancavano qui → save/load di LEAD_CHECKLIST/LEAD_BINDINGS
+    // fallivano in silenzio (fileName undefined → "Key non valida") e le spunte del
+    // funnel-conferma andavano perse al reload. File permanenti in appDataFolder.
+    LEAD_CHECKLIST: 'testmess_lead_checklist.json', // stato checkbox funnel-conferma per lead
+    LEAD_BINDINGS: 'testmess_lead_bindings.json'    // agganci manuali lead↔evento "LEAD - Call"
 };
 
 let driveInited = false;
