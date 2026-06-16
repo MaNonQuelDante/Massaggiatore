@@ -271,12 +271,19 @@ async function syncCalendarEvents(silent = false, loadMore = false) {
         }
         
         // Salva eventi in localStorage
+        // v2.5.58: PERSISTI created/updated. La events.list non usa fields mask, quindi
+        // l'API ritorna SEMPRE event.created (timestamp ISO 8601 di creazione dell'evento,
+        // ≈ ora di prenotazione lato Acuity). PRIMA veniva scartato qui nel .map() e perso
+        // ovunque a valle (cache + dataset eventData del lead). created = ora di CREAZIONE
+        // dell'evento, NON start (orario appuntamento) e NON updated (ultima modifica).
         const eventsData = filteredEvents.map(event => ({
             id: event.id,
             summary: event.summary || 'Senza titolo',
             description: event.description || '',
             start: event.start.dateTime || event.start.date,
             end: event.end.dateTime || event.end.date,
+            created: event.created || null,   // v2.5.58: ora di creazione evento (critico)
+            updated: event.updated || null,   // v2.5.58: ultima modifica (per riferimento)
             attendees: event.attendees || [],
             location: event.location || '',
             calendarName: event.calendarName,
@@ -1302,14 +1309,15 @@ function detectGenderFromName(name) {
 }
 
 // ===== MARCA LEAD COME CONTATTATO =====
-async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, calendarId) {
+async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, calendarId, eventCreated) {
     const contactedEntry = {
         eventId: eventId,
         nome: nome,
         cognome: cognome || '',
         telefono: telefono || '',
-        date: eventDate,
-        timestamp: new Date().toISOString()
+        date: eventDate,                        // orario APPUNTAMENTO (start)
+        eventCreated: eventCreated || null,     // v2.5.58: orario di CREAZIONE evento (prenotazione)
+        timestamp: new Date().toISOString()     // quando l'ho contattato io
     };
     
     // 🔥 FIX v2.5.15: Salva PRIMA su localStorage (backup), POI prova Drive
@@ -1563,6 +1571,19 @@ async function ensureEventTitleCorrect(event) {
     }
 }
 
+// ===== v2.5.58: FORMATTA ORA DI CREAZIONE EVENTO =====
+// created = timestamp ISO 8601 di quando l'evento è stato creato nel calendario Google
+// (≈ ora di prenotazione lato Acuity, sync server-side, latenza max qualche secondo).
+// Ritorna stringa "gg/mm/aaaa hh:mm" o '' se non disponibile.
+function formatEventCreated(created) {
+    if (!created) return '';
+    const d = new Date(created);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('it-IT') + ' ' +
+        d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+}
+window.formatEventCreated = formatEventCreated;
+
 // ===== VISUALIZZA CALENDARIO =====
 async function displayCalendarView() {
     const calendarView = document.getElementById('calendarView');
@@ -1666,6 +1687,8 @@ async function displayCalendarView() {
             const statusClass = event.contacted ? 'contacted' : 'pending';
             const statusIcon = event.contacted ? 'fa-check-circle' : 'fa-clock';
             const statusText = event.contacted ? 'Contattato' : 'Da contattare';
+            // v2.5.58: ora di creazione evento (prenotazione) — dato critico, ora persistito
+            const createdStr = formatEventCreated(event.created);
             
             // v2.5.30: Bottone Meet SEMPRE visibile (passati, presenti, futuri)
             const existingMeet = event.hangoutLink || 
@@ -1696,6 +1719,9 @@ async function displayCalendarView() {
                     <div class="event-name">
                         <i class="fas fa-user"></i> ${leadName}
                     </div>
+                    ${createdStr ? `<div class="event-created" style="font-size: 0.8em; color: var(--gray-500);" title="Quando l'evento è stato creato/prenotato">
+                        <i class="fas fa-calendar-plus"></i> Creato: ${createdStr}
+                    </div>` : ''}
                     <div class="event-status">
                         <i class="fas ${statusIcon}"></i> ${statusText}
                     </div>

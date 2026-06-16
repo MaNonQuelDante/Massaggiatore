@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.57',
-    fullName: 'v2.5.57 by Dante',
+    version: '2.5.58',
+    fullName: 'v2.5.58 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Funnel lead: quando il match è incerto il sito CHIEDE. Caso dubbio → banner "Forse è questo: <nome> · <data ora> [È lei ✓] [Non è lei ✗]". Su OGNI card (anche match automatici) link "evento sbagliato? cambia" che apre un selettore di tutti gli eventi "LEAD - Call" o consente di impostare il T0 a mano (data+ora). Le scelte sono salvate su Drive (LEAD_BINDINGS) e ricordate (chiesto una volta sola; anche i "no"). Match certi (telefono/nome esatto) restano automatici e silenziosi.'
+    lastUpdate: '2026-06-16 - TASK 1: salvataggio AUTOMATICO del contatto in Google Contacts ad ogni invio messaggio (se il numero NON è già in rubrica, dedup su SAVED_CONTACTS). organizations.name = "FE - Lead"/"SG - Lead". Rimossa la vecchia lista "contatti da salvare"; nuovo form "Aggiungi numero" (Nome/Cognome/Numero/FE-SG/Società) + verifica numero in rubrica. FIX: checkAndSaveContact passava chiavi sbagliate (firstName/lastName/phone/company) a saveContactToGoogle → il salvataggio automatico non aveva mai funzionato. TASK 2: il campo created (ora di creazione evento Calendar ≈ prenotazione Acuity) ora viene PERSISTITO: prima il .map() di syncCalendar lo scartava. Aggiunto created/updated nella cache eventi, propagato nel record lead-contattato (eventCreated) e mostrato nella card calendario.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

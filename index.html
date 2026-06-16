@@ -9,7 +9,7 @@
     <!-- PRIVACY: blocco indicizzazione motori di ricerca (sito accessibile solo via link) -->
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
     <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
-    <title>Stock Gain Messenger - v2.5.57 by Dante</title>
+    <title>Stock Gain Messenger - v2.5.58 by Dante</title>
 
     <!-- Favicon e icone app (logo: mani in massaggio + sorriso, teal #128C7E) -->
     <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
@@ -77,7 +77,7 @@
                 <!-- Titolo e Nome Operatore -->
                 <div class="header-text">
                     <h1 class="header-title">Stock Gain Messenger</h1>
-                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.57 by Dante">v2.5.57 by Dante</p>
+                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.58 by Dante">v2.5.58 by Dante</p>
                 </div>
                 
                 <!-- WhatsApp Icon -->
@@ -535,54 +535,73 @@
         <div id="rubricaContent" class="page-content" style="display: none;">
             <div class="card">
                 <div class="card-title">
-                    <i class="fas fa-address-book"></i> Rubrica - Contatti da Salvare
+                    <i class="fas fa-address-book"></i> Rubrica - Verifica e Aggiungi Contatti
                 </div>
                 <p style="margin-bottom: 20px; color: var(--gray-600);">
-                    Questa sezione mostra i contatti della cronologia che NON sono ancora stati salvati in rubrica Google.
+                    I contatti dei lead vengono salvati <strong>in automatico</strong> in Google Contacts quando invii un messaggio.
+                    Qui puoi <strong>verificare</strong> che un numero sia in rubrica e <strong>aggiungere a mano</strong> un nuovo numero.
                 </p>
-                
-                <!-- Date Range Picker -->
-                <div class="date-range-picker" style="margin-bottom: 20px; padding: 16px; background: var(--gray-100); border-radius: 8px;">
-                    <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
-                        <div style="flex: 1; min-width: 200px;">
-                            <label for="rubricaDateStart" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">
-                                <i class="fas fa-calendar-alt"></i> Data Inizio
-                            </label>
-                            <input 
-                                type="date" 
-                                id="rubricaDateStart" 
-                                class="form-control"
-                                style="width: 100%;"
-                            >
+
+                <!-- v2.5.58: Form "Aggiungi numero" (Nome / Cognome / Numero / FE-SG / Società) -->
+                <form id="rubricaAddForm" style="margin-bottom: 24px; padding: 16px; background: var(--gray-100); border-radius: 8px;">
+                    <div style="font-weight: 600; color: var(--gray-800); margin-bottom: 12px;">
+                        <i class="fas fa-user-plus"></i> Aggiungi numero alla rubrica
+                    </div>
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 160px;">
+                            <label for="rubricaAddNome" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">Nome</label>
+                            <input type="text" id="rubricaAddNome" class="form-control" placeholder="Nome" required>
                         </div>
-                        <div style="flex: 1; min-width: 200px;">
-                            <label for="rubricaDateEnd" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">
-                                <i class="fas fa-calendar-check"></i> Data Fine
-                            </label>
-                            <input 
-                                type="date" 
-                                id="rubricaDateEnd" 
-                                class="form-control"
-                                style="width: 100%;"
-                            >
-                        </div>
-                        <div style="flex: 0 0 auto;">
-                            <label style="display: block; margin-bottom: 6px; opacity: 0;">_</label>
-                            <button type="button" class="btn btn-secondary" id="applyDateFilterBtn">
-                                <i class="fas fa-filter"></i> Applica Filtro
-                            </button>
+                        <div style="flex: 1; min-width: 160px;">
+                            <label for="rubricaAddCognome" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">Cognome</label>
+                            <input type="text" id="rubricaAddCognome" class="form-control" placeholder="Cognome (opzionale)">
                         </div>
                     </div>
-                    <div id="dateRangeInfo" style="margin-top: 10px; font-size: 0.9em; color: var(--gray-600);">
-                        <i class="fas fa-info-circle"></i> Range: <span id="dateRangeDays">0</span> giorni
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px;">
+                        <div style="flex: 1; min-width: 160px;">
+                            <label for="rubricaAddTelefono" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">Numero</label>
+                            <input type="tel" id="rubricaAddTelefono" class="form-control" placeholder="+39 333 1234567" required>
+                        </div>
+                        <div style="flex: 0 0 auto; min-width: 140px;">
+                            <label for="rubricaAddTipo" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">Tipo lead</label>
+                            <select id="rubricaAddTipo" class="form-control">
+                                <option value="FE">FE (Finanza Efficace)</option>
+                                <option value="SG">SG (Stock Gain)</option>
+                            </select>
+                        </div>
+                        <div style="flex: 1; min-width: 160px;">
+                            <label for="rubricaAddSocieta" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">
+                                Società <span style="font-weight: 400; color: var(--gray-500); font-size: 0.85em;">(vuoto = dal tipo lead)</span>
+                            </label>
+                            <input type="text" id="rubricaAddSocieta" class="form-control" placeholder="Es. FE - Lead">
+                        </div>
                     </div>
+                    <button type="submit" id="rubricaAddBtn" class="btn btn-primary" style="margin-top: 16px;">
+                        <i class="fas fa-save"></i> Salva in rubrica Google
+                    </button>
+                </form>
+
+                <!-- v2.5.58: Verifica numero in rubrica -->
+                <div style="margin-bottom: 24px; padding: 16px; background: var(--gray-100); border-radius: 8px;">
+                    <div style="font-weight: 600; color: var(--gray-800); margin-bottom: 12px;">
+                        <i class="fas fa-search"></i> Verifica se un numero è in rubrica
+                    </div>
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <input type="tel" id="rubricaVerifyInput" class="form-control" placeholder="+39 333 1234567">
+                        </div>
+                        <button type="button" id="rubricaVerifyBtn" class="btn btn-secondary">
+                            <i class="fas fa-search"></i> Verifica
+                        </button>
+                    </div>
+                    <div id="rubricaVerifyResult" style="margin-top: 12px; font-size: 0.95em;"></div>
                 </div>
-                
+
                 <button type="button" class="btn btn-primary" id="syncRubricaBtn" style="margin-bottom: 20px;">
                     <i class="fas fa-sync-alt"></i> Sincronizza Ora
                 </button>
                 <div id="rubricaList" class="rubrica-container">
-                    <p class="placeholder-text">Caricamento contatti...</p>
+                    <p class="placeholder-text">Caricamento rubrica...</p>
                 </div>
             </div>
         </div>
@@ -686,15 +705,15 @@
 
     <!-- Scripts -->
     <script src="js/nomi-italiani.js?v=2.5.29"></script>
-    <script src="js/config.js?v=2.5.57"></script>
+    <script src="js/config.js?v=2.5.58"></script>
     <script src="js/google-auth.js?v=2.5.54"></script>
     <script src="js/google-drive-storage.js?v=2.5.29"></script>
     <script src="js/google-sheets-assistenti.js?v=2.5.29"></script>
-    <script src="js/google-calendar.js?v=2.5.54"></script>
+    <script src="js/google-calendar.js?v=2.5.58"></script>
     <script src="js/templates.js?v=2.5.29"></script>
-    <script src="js/rubrica.js?v=2.5.29"></script>
+    <script src="js/rubrica.js?v=2.5.58"></script>
     <script src="js/github-auto-push.js?v=2.5.29"></script>
-    <script src="js/main.js?v=2.5.57"></script>
+    <script src="js/main.js?v=2.5.58"></script>
     
     <!-- Google API Initialization -->
     <script>

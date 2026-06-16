@@ -56,11 +56,11 @@ let isScanningContacts = false;
 
 // ===== INIZIALIZZAZIONE =====
 function initRubrica() {
-    console.log('📒 Rubrica module v2.5.34 initialized - Controllo incongruenze società + aggiornamento contatti');
-    
-    // Inizializza date picker con valori default
+    console.log('📒 Rubrica module v2.5.58 initialized - Salvataggio automatico all\'invio + form "Aggiungi numero"');
+
+    // Inizializza date picker con valori default (no-op se il DOM è stato rimosso)
     initDateRangePicker();
-    
+
     // Event listener per pulsante sincronizza rubrica
     const syncBtn = document.getElementById('syncRubricaBtn');
     if (syncBtn) {
@@ -68,24 +68,124 @@ function initRubrica() {
             await syncSavedContactsFromGoogle();
         });
     }
-    
-    // Event listener per pulsante applica filtro date
+
+    // Event listener per pulsante applica filtro date (no-op se rimosso)
     const applyFilterBtn = document.getElementById('applyDateFilterBtn');
     if (applyFilterBtn) {
         applyFilterBtn.addEventListener('click', async () => {
             await applyDateRangeFilter();
         });
     }
-    
-    // Event listener per cambio date (aggiorna contatore giorni)
+
+    // Event listener per cambio date (aggiorna contatore giorni) (no-op se rimosso)
     const dateStartInput = document.getElementById('rubricaDateStart');
     const dateEndInput = document.getElementById('rubricaDateEnd');
-    
+
     if (dateStartInput && dateEndInput) {
         dateStartInput.addEventListener('change', updateDateRangeInfo);
         dateEndInput.addEventListener('change', updateDateRangeInfo);
     }
+
+    // v2.5.58: form "Aggiungi numero" (Nome / Cognome / Numero / FE-SG / Società)
+    const addForm = document.getElementById('rubricaAddForm');
+    if (addForm) {
+        addForm.addEventListener('submit', handleRubricaAddSubmit);
+    }
+
+    // v2.5.58: verifica se un numero è già in rubrica
+    const verifyBtn = document.getElementById('rubricaVerifyBtn');
+    if (verifyBtn) {
+        verifyBtn.addEventListener('click', verifyNumberInRubrica);
+    }
+    const verifyInput = document.getElementById('rubricaVerifyInput');
+    if (verifyInput) {
+        verifyInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); verifyNumberInRubrica(); }
+        });
+    }
 }
+
+// ===== v2.5.58: DERIVA "FE - Lead" / "SG - Lead" DAL TIPO LEAD =====
+// Accetta 'FE'/'SG' (dal selettore) oppure il valore servizio ('Finanza Efficace'/'Stock Gain').
+function societaFromTipoLead(tipo) {
+    const t = (tipo || '').toString().toUpperCase();
+    if (t.includes('FE') || t.includes('FINANZA')) return 'FE - Lead';
+    if (t.includes('SG') || t.includes('STOCK')) return 'SG - Lead';
+    return 'SG - Lead'; // fallback storico
+}
+window.societaFromTipoLead = societaFromTipoLead;
+
+// ===== v2.5.58: SUBMIT FORM "AGGIUNGI NUMERO" =====
+async function handleRubricaAddSubmit(e) {
+    if (e) e.preventDefault();
+
+    const nome = (document.getElementById('rubricaAddNome')?.value || '').trim();
+    const cognome = (document.getElementById('rubricaAddCognome')?.value || '').trim();
+    const telefono = (document.getElementById('rubricaAddTelefono')?.value || '').trim();
+    const tipo = document.getElementById('rubricaAddTipo')?.value || 'SG';
+    const societaInput = (document.getElementById('rubricaAddSocieta')?.value || '').trim();
+
+    if (!window.accessToken) {
+        showNotification('Connetti Google per salvare in rubrica', 'error');
+        return;
+    }
+    if (!nome) {
+        showNotification('⚠️ Inserisci almeno il nome', 'error');
+        return;
+    }
+    // Riusa la validazione numero esistente
+    if (!formatPhoneForGoogle(telefono)) {
+        showNotification('❌ Numero di telefono non valido', 'error');
+        return;
+    }
+
+    // Società: se compilata usa quella, altrimenti deriva dal selettore FE/SG
+    const societa = societaInput || societaFromTipoLead(tipo);
+
+    const btn = document.getElementById('rubricaAddBtn');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Salvataggio...'; }
+
+    const success = await saveContactToGoogle({ nome, cognome, telefono, societa });
+
+    if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+
+    if (success) {
+        // Pulisci il form (lascia il selettore FE/SG com'è)
+        ['rubricaAddNome', 'rubricaAddCognome', 'rubricaAddTelefono', 'rubricaAddSocieta'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+    }
+}
+window.handleRubricaAddSubmit = handleRubricaAddSubmit;
+
+// ===== v2.5.58: VERIFICA NUMERO IN RUBRICA =====
+function verifyNumberInRubrica() {
+    const input = document.getElementById('rubricaVerifyInput');
+    const result = document.getElementById('rubricaVerifyResult');
+    if (!input || !result) return;
+
+    const phone = (input.value || '').trim();
+    if (!phone) {
+        result.innerHTML = '<span style="color: var(--gray-500);">Inserisci un numero da verificare.</span>';
+        return;
+    }
+    if (!normalizeForComparison(phone)) {
+        result.innerHTML = '<span style="color: var(--error-color);"><i class="fas fa-times-circle"></i> Numero non valido.</span>';
+        return;
+    }
+
+    const check = isPhoneInRubrica(phone);
+    if (check.present) {
+        const soc = check.savedContact && check.savedContact.societa ? ` · ${check.savedContact.societa}` : '';
+        const nome = check.savedContact && check.savedContact.nome ? ` (${check.savedContact.nome})` : '';
+        result.innerHTML = `<span style="color: var(--success-color);"><i class="fas fa-check-circle"></i> Già in rubrica${nome}${soc}</span>`;
+    } else {
+        result.innerHTML = '<span style="color: var(--warning-color);"><i class="fas fa-exclamation-circle"></i> NON presente in rubrica. Usa il form sopra per aggiungerlo.</span>';
+    }
+}
+window.verifyNumberInRubrica = verifyNumberInRubrica;
 
 // ===== INIZIALIZZA DATE RANGE PICKER =====
 function initDateRangePicker() {
@@ -700,9 +800,37 @@ function normalizeForComparison(phone) {
 function formatPhoneForGoogle(phone) {
     const normalized = normalizePhone(phone);
     if (!normalized) return null;
-    
+
     // Aggiungi + se non c'è già
     return normalized.startsWith('+') ? normalized : '+' + normalized;
+}
+
+// ===== v2.5.58: È GIÀ IN RUBRICA? (dedup pre-salvataggio automatico) =====
+// Confronta il numero contro la cache SAVED_CONTACTS usando la STESSA logica di
+// getUnsavedContacts: normalizeForComparison (agnostico al prefisso +39) sia sulla
+// chiave del numero in arrivo sia su tutte le chiavi in cache.
+// Ritorna { present: bool, savedContact: {…}|null, key: string|null }.
+function isPhoneInRubrica(phone) {
+    const target = normalizeForComparison(phone);
+    if (!target) return { present: false, savedContact: null, key: null };
+
+    const savedContactsJSON = localStorage.getItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS);
+    if (!savedContactsJSON) return { present: false, savedContact: null, key: null };
+
+    let savedContacts = {};
+    try {
+        savedContacts = JSON.parse(savedContactsJSON);
+    } catch (e) {
+        console.error('❌ Errore parsing saved contacts (isPhoneInRubrica):', e);
+        return { present: false, savedContact: null, key: null };
+    }
+
+    for (const key of Object.keys(savedContacts)) {
+        if (normalizeForComparison(key) === target) {
+            return { present: true, savedContact: savedContacts[key], key };
+        }
+    }
+    return { present: false, savedContact: null, key: null };
 }
 
 // ===== VERIFICA INCONGRUENZA SOCIETÀ (v2.5.23) =====
@@ -1171,236 +1299,61 @@ function renderContactToUpdate(contact) {
     `;
 }
 
-// ===== RENDER LISTA RUBRICA =====
+// ===== RENDER LISTA RUBRICA (v2.5.58: PANNELLO DI VERIFICA) =====
+// La vecchia lista "contatti da salvare" (con i ✓) è stata RIMOSSA: ora i contatti
+// si salvano in automatico all'invio del messaggio (vedi checkAndSaveContact in main.js)
+// oppure manualmente col form "Aggiungi numero". Questa funzione mostra solo lo stato
+// della rubrica (quanti contatti, ultimo sync) e serve a VERIFICARE, non più a salvare.
 async function renderRubricaList() {
     const container = document.getElementById('rubricaList');
     if (!container) return;
-    
+
     // 🔒 AUTH GUARD: Blocca senza login
     if (!window.accessToken) {
         container.innerHTML = `
             <div class="info-state" style="text-align: center; padding: 40px 20px;">
                 <i class="fas fa-lock" style="font-size: 64px; color: var(--gray-400); margin-bottom: 20px;"></i>
                 <h3 style="color: var(--gray-800); margin-bottom: 12px;">Login richiesto</h3>
-                <p style="color: var(--gray-600); margin-bottom: 24px;">
-                    Effettua il login Google per vedere i contatti da salvare
-                </p>
-            </div>
-        `;
-        return;
-    }
-    
-    // Mostra loader
-    container.innerHTML = `
-        <div style="text-align: center; padding: 40px 20px;">
-            <i class="fas fa-spinner fa-spin" style="font-size: 48px; color: var(--primary-color); margin-bottom: 16px;"></i>
-            <p style="color: var(--gray-600);">Scansione contatti in corso...</p>
-            <p style="color: var(--gray-500); font-size: 0.9em;">Caricamento cronologia Drive + eventi calendario (12 mesi)...</p>
-        </div>
-    `;
-    
-    // STEP 1: Verifica se hai mai sincronizzato
-    const lastSync = localStorage.getItem(STORAGE_KEYS_RUBRICA.LAST_RUBRICA_SYNC);
-    const hasSynced = !!lastSync;
-    
-    // STEP 2: Ottieni contatti (ASYNC!) - v2.5.23: ritorna {unsaved, toUpdate}
-    const contactsData = await getUnsavedContacts();
-    const unsavedContacts = contactsData.unsaved || [];
-    const contactsToUpdate = contactsData.toUpdate || [];
-    
-    // STEP 3: Verifica se hai dati
-    const hasAnyData = (unsavedContacts.length > 0 || contactsToUpdate.length > 0) || hasSynced;
-    
-    // CASO 1: Mai sincronizzato
-    if (!hasSynced) {
-        container.innerHTML = `
-            <div class="info-state" style="text-align: center; padding: 40px 20px;">
-                <i class="fas fa-info-circle" style="font-size: 64px; color: var(--info-color); margin-bottom: 20px;"></i>
-                <h3 style="color: var(--gray-800); margin-bottom: 12px;">Prima sincronizzazione necessaria</h3>
-                <p style="color: var(--gray-600); margin-bottom: 24px;">
-                    Click su <strong style="color: var(--primary-color);">🔄 Sincronizza</strong> per caricare i contatti da Google Contacts
-                </p>
-                <button type="button" class="btn btn-primary" onclick="syncSavedContactsFromGoogle()">
-                    <i class="fas fa-sync-alt"></i> Sincronizza Ora
-                </button>
-            </div>
-        `;
-        return;
-    }
-    
-    // CASO 2: Sincronizzato ma nessun dato (né cronologia né calendario)
-    if (!hasAnyData) {
-        container.innerHTML = `
-            <div class="empty-state" style="text-align: center; padding: 40px 20px;">
-                <i class="fas fa-inbox" style="font-size: 64px; color: var(--gray-400); margin-bottom: 20px;"></i>
-                <h3 style="color: var(--gray-600); margin-bottom: 12px;">Nessun dato disponibile</h3>
-                <p style="color: var(--gray-500);">
-                    Invia il primo messaggio o sincronizza il calendario Google per vedere i contatti qui
-                </p>
-            </div>
-        `;
-        return;
-    }
-    
-    // CASO 3: Tutti i contatti già salvati
-    if (unsavedContacts.length === 0) {
-        container.innerHTML = `
-            <div class="empty-state" style="text-align: center; padding: 40px 20px;">
-                <i class="fas fa-check-circle" style="font-size: 64px; color: var(--success-color); margin-bottom: 20px;"></i>
-                <h3 style="color: var(--success-color); margin-bottom: 12px;">Tutti i contatti sono salvati!</h3>
                 <p style="color: var(--gray-600);">
-                    Ottimo lavoro! Non ci sono contatti da salvare in rubrica.
+                    Effettua il login Google per gestire la rubrica.
                 </p>
             </div>
         `;
         return;
     }
-    
-    // CASO 4: Ci sono contatti da salvare
-    // Mostra ultimo sync
-    let syncText = 'Mai sincronizzato';
-    if (lastSync) {
-        const syncDate = new Date(lastSync);
-        syncText = `Ultimo sync: ${syncDate.toLocaleDateString('it-IT')} ${syncDate.toLocaleTimeString('it-IT', {hour: '2-digit', minute: '2-digit'})}`;
+
+    // Conta i contatti in cache (SAVED_CONTACTS) e leggi l'ultimo sync
+    let savedCount = 0;
+    const savedContactsJSON = localStorage.getItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS);
+    if (savedContactsJSON) {
+        try {
+            savedCount = Object.keys(JSON.parse(savedContactsJSON)).length;
+        } catch (e) {
+            console.error('❌ Errore parsing saved contacts (render):', e);
+        }
     }
-    
-    // Paginazione: primi 100
-    const displayContacts = unsavedContacts.slice(0, RUBRICA_CONFIG.CONTACTS_PER_PAGE);
-    const remaining = unsavedContacts.length - displayContacts.length;
-    
+
+    const lastSync = localStorage.getItem(STORAGE_KEYS_RUBRICA.LAST_RUBRICA_SYNC);
+    let syncText = 'Mai sincronizzato — premi "Sincronizza Ora" per leggere i contatti da Google.';
+    if (lastSync) {
+        const d = new Date(lastSync);
+        syncText = `Ultimo sync: ${d.toLocaleDateString('it-IT')} ${d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`;
+    }
+
     container.innerHTML = `
-        <div class="rubrica-header" style="margin-bottom: 20px; padding: 12px; background: var(--gray-100); border-radius: 8px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <strong style="color: var(--primary-color);">
-                    <i class="fas fa-address-book"></i> 
-                    ${unsavedContacts.length} contatti da salvare
-                </strong>
-                <button type="button" class="btn-icon" id="refreshRubricaBtn" title="Aggiorna (invalida cache)">
-                    <i class="fas fa-sync-alt"></i>
-                </button>
+        <div class="rubrica-header" style="padding: 14px; background: var(--gray-100); border-radius: 8px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                <i class="fas fa-address-book" style="color: var(--primary-color);"></i>
+                <strong style="color: var(--gray-800);">${savedCount} contatti in rubrica (cache locale)</strong>
             </div>
             <small style="color: var(--gray-600);">${syncText}</small>
-        </div>
-        
-        <div class="rubrica-list">
-            ${displayContacts.map(contact => `
-                <div class="rubrica-item" style="padding: 12px; border: 1px solid var(--gray-200); border-radius: 8px; margin-bottom: 10px; background: white;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="flex: 1;">
-                            <div style="font-weight: 500; color: var(--gray-800); margin-bottom: 4px;">
-                                <i class="fas fa-user"></i>
-                                ${contact.nome} ${contact.cognome || ''}
-                            </div>
-                            <div style="font-size: 0.9em; color: var(--gray-600); margin-bottom: 2px;">
-                                <i class="fas fa-phone"></i> ${contact.telefono}
-                            </div>
-                            ${contact.societa ? `
-                                <div style="font-size: 0.85em; color: var(--gray-500);">
-                                    <i class="fas fa-building"></i> ${contact.societa}
-                                </div>
-                            ` : ''}
-                            ${contact.source ? `
-                                <div style="font-size: 0.8em; color: var(--gray-400); margin-top: 4px;">
-                                    <i class="fas fa-${contact.source === 'calendario' ? 'calendar' : 'history'}"></i> 
-                                    ${contact.source === 'calendario' ? 'Da calendario' : 'Da cronologia'}
-                                    ${contact.calendarName ? ` (${contact.calendarName})` : ''}
-                                </div>
-                            ` : ''}
-                        </div>
-                        <div style="display: flex; gap: 8px;">
-                            <button 
-                                type="button" 
-                                class="btn btn-sm btn-success save-contact-btn"
-                                data-phone="${contact.telefono}"
-                                data-nome="${contact.nome}"
-                                data-cognome="${contact.cognome || ''}"
-                                data-societa="${contact.societa || ''}"
-                                data-servizio="${contact.servizio || ''}"
-                                title="Salva in rubrica Google"
-                            >
-                                <i class="fas fa-check"></i>
-                            </button>
-                            <button 
-                                type="button" 
-                                class="btn btn-sm btn-secondary mark-saved-btn"
-                                data-phone="${contact.telefono}"
-                                title="Già salvato"
-                            >
-                                <i class="fas fa-check-double"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `).join('')}
-        </div>
-        
-        ${remaining > 0 ? `
-            <div style="margin-top: 16px; padding: 12px; background: var(--gray-100); border-radius: 8px; text-align: center; color: var(--gray-600);">
+            <p style="margin-top: 12px; margin-bottom: 0; font-size: 0.9em; color: var(--gray-600);">
                 <i class="fas fa-info-circle"></i>
-                Altri ${remaining} contatti non mostrati (mostra i primi ${RUBRICA_CONFIG.CONTACTS_PER_PAGE})
-            </div>
-        ` : ''}
+                I contatti dei lead vengono salvati <strong>in automatico</strong> quando invii un messaggio.
+                Qui puoi verificare un numero o aggiungerne uno a mano.
+            </p>
+        </div>
     `;
-    
-    // Event listeners per pulsanti CON SPINNER E DISABLE
-    container.querySelectorAll('.save-contact-btn').forEach(btn => {
-        btn.addEventListener('click', async function() {
-            // Previeni doppio click
-            if (this.disabled) return;
-            
-            // Salva stato originale
-            const originalHTML = this.innerHTML;
-            
-            // Disabilita e mostra spinner
-            this.disabled = true;
-            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-            
-            const contactData = {
-                telefono: this.dataset.phone,
-                nome: this.dataset.nome,
-                cognome: this.dataset.cognome,
-                societa: this.dataset.societa,
-                servizio: this.dataset.servizio
-            };
-            
-            const success = await saveContactToGoogle(contactData);
-            
-            if (!success) {
-                // Ripristina pulsante solo se fallito
-                this.disabled = false;
-                this.innerHTML = originalHTML;
-            }
-            // Se successo, la UI viene aggiornata da renderRubricaList()
-        });
-    });
-    
-    container.querySelectorAll('.mark-saved-btn').forEach(btn => {
-        btn.addEventListener('click', async function() {
-            // Previeni doppio click
-            if (this.disabled) return;
-            
-            // Salva stato originale
-            const originalHTML = this.innerHTML;
-            
-            // Disabilita e mostra spinner
-            this.disabled = true;
-            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-            
-            await markContactAsAlreadySaved(this.dataset.phone);
-            showNotification('✅ Contatto marcato come già salvato', 'success');
-            
-            // UI viene aggiornata da renderRubricaList()
-        });
-    });
-    
-    // Re-attach event listener per refresh (potrebbe essere ricreato)
-    const refreshBtn = document.getElementById('refreshRubricaBtn');
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', async () => {
-            // Forza refresh (invalida cache)
-            await renderRubricaList();
-        });
-    }
 }
 
 // ===== ESPORTA FUNZIONI GLOBALI =====
@@ -1411,4 +1364,6 @@ window.markContactAsAlreadySaved = markContactAsAlreadySaved; // Rinominato
 window.saveContactToGoogle = saveContactToGoogle;
 window.syncSavedContactsFromGoogle = syncSavedContactsFromGoogle;
 window.normalizePhone = normalizePhone;
+window.normalizeForComparison = normalizeForComparison; // v2.5.58
 window.formatPhoneForGoogle = formatPhoneForGoogle;
+window.isPhoneInRubrica = isPhoneInRubrica; // v2.5.58: dedup pre-salvataggio automatico

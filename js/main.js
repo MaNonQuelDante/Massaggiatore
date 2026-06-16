@@ -1,7 +1,10 @@
 /* ================================================================================
-   TESTmess v2.5.48 - Salvataggio rubrica (Google Contacts) SOLO per il PRIMO
-   messaggio E quando il lead proviene dal calendario (option #selectLead con
-   dataset.eventId). Nuovo gate shouldSaveContact() + log quando viene saltato.
+   TESTmess v2.5.58 - Salvataggio rubrica AUTOMATICO ad ogni invio messaggio: se il
+   numero NON è già in rubrica (dedup su SAVED_CONTACTS via isPhoneInRubrica) il contatto
+   viene salvato direttamente in Google Contacts, senza passare dalla lista "da salvare".
+   organizations.name = "FE - Lead"/"SG - Lead". Rimosso il gate shouldSaveContact()
+   (deprecato). FIX: checkAndSaveContact passava chiavi sbagliate a saveContactToGoogle.
+   Inoltre: created dell'evento Calendar propagato nel record lead-contattato (eventCreated).
    ================================================================================ */
 
 // ===== STORAGE KEYS (per compatibilità con DriveStorage) =====
@@ -537,11 +540,11 @@ async function generateMessage(e) {
     // Salva ultimo messaggio
     saveLastMessage(nome, cognome, telefono);
 
-    // Salva in Google Contacts (v2.5.32: anche senza cognome)
-    // v2.5.48: solo se PRIMO messaggio E lead dal calendario (vedi shouldSaveContact).
-    // Letto QUI, PRIMA di resetForm() più sotto, così tipoMessaggio/eventId sono ancora validi.
-    if (window.saveContactToGoogle && nome && telefono && shouldSaveContact()) {
-        checkAndSaveContact(nome, cognome, telefono, societa);
+    // Salva in Google Contacts (v2.5.58: SALVATAGGIO AUTOMATICO ad OGNI invio se il
+    // numero NON è già in rubrica — gate primo-messaggio/da-calendario RIMOSSO, ora la
+    // dedup contro SAVED_CONTACTS dentro checkAndSaveContact decide cosa salvare).
+    if (window.saveContactToGoogle && nome && telefono) {
+        checkAndSaveContact(nome, cognome, telefono, societa, servizio);
     }
 
     // Copia automaticamente
@@ -593,18 +596,21 @@ async function sendToWhatsApp() {
     await saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa, 'whatsapp'); // v2.5.45: canale
     saveLastMessage(nome, cognome, telefono);
 
-    // Salva in Google Contacts (v2.5.32: anche senza cognome)
-    // v2.5.48: solo se PRIMO messaggio E lead dal calendario (vedi shouldSaveContact).
-    // Letto QUI, PRIMA di resetForm() più sotto, così tipoMessaggio/eventId sono ancora validi.
-    if (window.saveContactToGoogle && nome && telefono && shouldSaveContact()) {
-        checkAndSaveContact(nome, cognome, telefono, societa);
+    // Salva in Google Contacts (v2.5.58: SALVATAGGIO AUTOMATICO ad OGNI invio se il
+    // numero NON è già in rubrica — gate primo-messaggio/da-calendario RIMOSSO, ora la
+    // dedup contro SAVED_CONTACTS dentro checkAndSaveContact decide cosa salvare).
+    if (window.saveContactToGoogle && nome && telefono) {
+        checkAndSaveContact(nome, cognome, telefono, societa, servizio);
     }
 
     // Reset form (per ultimo: la selezione è già stata usata dal mark)
     await resetForm();
 }
 
-// ===== GATE SALVATAGGIO RUBRICA (v2.5.48) =====
+// ===== GATE SALVATAGGIO RUBRICA (v2.5.48) — DEPRECATO in v2.5.58 =====
+// ⚠️ v2.5.58: NON più usato. Il salvataggio in rubrica ora avviene ad OGNI invio (se il
+// numero non è già presente, vedi checkAndSaveContact). Funzione mantenuta per riferimento
+// storico / eventuale riuso, ma non più richiamata dai punti d'invio.
 // Salva il contatto in Google Contacts SOLO se ENTRAMBE le condizioni sono vere:
 //   1) il tipo messaggio selezionato è il PRIMO messaggio (tipoMessaggio === 'primo_messaggio');
 //   2) il lead selezionato proviene dal CALENDARIO (l'<option> in #selectLead ha dataset.eventId).
@@ -631,42 +637,56 @@ function shouldSaveContact() {
     return true;
 }
 
-// ===== CHECK E SALVA CONTATTO =====
-async function checkAndSaveContact(nome, cognome, telefono, societa) {
-    console.log('🔵 [v2.5.35] checkAndSaveContact CHIAMATA:', { nome, cognome, telefono, societa });
-    
-    const contactData = {
-        firstName: nome,
-        lastName: cognome,
-        phone: telefono,
-        company: societa
-    };
-    
-    if (window.saveContactToGoogle) {
-        console.log('🔵 [v2.5.35] Chiamata saveContactToGoogle...');
-        const result = await window.saveContactToGoogle(contactData);
-        console.log('🔵 [v2.5.35] Risultato saveContactToGoogle:', result);
-        
-        // Gestisci risultato
-        if (result && result.success) {
-            showNotification('✅ Contatto salvato in rubrica', 'success');
-            console.log('✅ [v2.5.35] Contatto salvato con successo');
-        } else if (result && result.skipped) {
-            if (result.reason === 'duplicate') {
-                showNotification('ℹ️ Contatto già presente in rubrica', 'info');
-                console.log('📇 [v2.5.35] Contatto già esistente, salvataggio saltato');
-            } else if (result.reason === 'conflict') {
-                showNotification('ℹ️ Contatto già esistente (conflitto API)', 'info');
-                console.log('📇 [v2.5.35] Conflitto API, contatto già esistente');
-            }
-        } else {
-            // Errore generico
-            showNotification('⚠️ Impossibile salvare contatto in rubrica', 'error');
-            console.error('❌ [v2.5.35] Salvataggio fallito, result:', result);
+// ===== CHECK E SALVA CONTATTO (v2.5.58: SALVATAGGIO AUTOMATICO ALL'INVIO) =====
+// Chiamata a OGNI invio messaggio (vedi generateMessage / sendToWhatsApp).
+// Logica:
+//   1) Se Google non è connesso → notifica e basta (niente token = nemmeno la cronologia
+//      si salva, vedi saveToCronologia: lo storage è 100% cloud). Il contatto NON è perso:
+//      appena rifai login potrai aggiungerlo a mano dal form Rubrica.
+//   2) Dedup contro la cache SAVED_CONTACTS (via isPhoneInRubrica, stessa normalizzazione
+//      di getUnsavedContacts). Se è GIÀ in rubrica → non faccio nulla.
+//   3) Se NON è in rubrica → salvo direttamente in Google Contacts con saveContactToGoogle,
+//      con organizations.name = "FE - Lead" / "SG - Lead" (dal valore società, o derivato
+//      dal servizio se la società è vuota).
+// v2.5.58 FIX: prima questa funzione passava chiavi sbagliate (firstName/lastName/phone/
+// company) a saveContactToGoogle, che invece legge nome/cognome/telefono/societa e ritorna
+// un booleano: di fatto il salvataggio automatico NON funzionava mai. Ora è allineata.
+async function checkAndSaveContact(nome, cognome, telefono, societa, servizio) {
+    if (!window.saveContactToGoogle) {
+        console.error('❌ saveContactToGoogle NON disponibile (rubrica.js non caricato?)');
+        return;
+    }
+
+    // 1) Nessun token → fallback morbido (non perdere nulla, solo notifica)
+    if (!window.accessToken) {
+        showNotification('ℹ️ Google non connesso: il contatto non è stato salvato in rubrica. Rifai login e aggiungilo dalla sezione Rubrica.', 'info');
+        console.log('⏭️ Salvataggio rubrica saltato: nessun accessToken');
+        return;
+    }
+
+    // organizations.name: usa la società se valorizzata, altrimenti derivala dal servizio (FE/SG)
+    let societaValue = (societa || '').trim();
+    if (!societaValue && window.societaFromTipoLead) {
+        societaValue = window.societaFromTipoLead(servizio);
+    }
+
+    // 2) Dedup contro SAVED_CONTACTS (numero già in rubrica → non fare nulla)
+    if (window.isPhoneInRubrica) {
+        const check = window.isPhoneInRubrica(telefono);
+        if (check.present) {
+            console.log(`📇 Contatto già in rubrica (${telefono}) — salvataggio automatico saltato`);
+            return;
         }
+    }
+
+    // 3) Salva direttamente in Google Contacts (saveContactToGoogle ritorna true/false e
+    //    gestisce internamente cache, notifiche e il caso 409 "già esistente")
+    console.log('🔵 [v2.5.58] Salvataggio automatico contatto:', { nome, cognome, telefono, societa: societaValue });
+    const ok = await window.saveContactToGoogle({ nome, cognome, telefono, societa: societaValue });
+    if (ok) {
+        console.log('✅ [v2.5.58] Contatto salvato automaticamente in rubrica');
     } else {
-        console.error('❌ [v2.5.35] saveContactToGoogle NON disponibile!');
-        showNotification('❌ Funzione rubrica non disponibile', 'error');
+        console.warn('⚠️ [v2.5.58] Salvataggio automatico non riuscito (vedi notifica)');
     }
 }
 
@@ -1075,12 +1095,14 @@ async function markLeadAsContactedFromCalendar(nome, cognome, telefono) {
         const eventData = JSON.parse(selectedOption.dataset.eventData || '{}');
         const eventId = selectedOption.dataset.eventId;
         const eventDate = eventData.start || new Date().toISOString();
+        // v2.5.58: orario di CREAZIONE dell'evento (prenotazione), persistito nel record lead.
+        const eventCreated = eventData.created || null;
         // v2.5.42 FIX: usa il vero calendario dell'evento (gli eventi SG NON sono su 'primary').
         const calendarId = eventData.calendarId || 'primary';
 
         // 🔥 Salva su Google Drive invece di localStorage
         if (window.markLeadAsContacted) {
-            await window.markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, calendarId);
+            await window.markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, calendarId, eventCreated);
         }
         
         console.log('✅ Lead marcato come contattato su Drive:', nome);
