@@ -1,4 +1,4 @@
-# CLAUDE.md — Stock Gain Messenger (TESTmess / sgfemassdante)
+# CLAUDE.md — Stock Gain Messenger (TESTmess / Massaggiatore)
 
 Istruzioni di progetto per Claude. Le leggo a ogni sessione.
 
@@ -27,7 +27,8 @@ Versionamento: l'app usa un numero unico crescente (es. 2.5.47). I singoli modul
 ## Stack
 - Web app statica, **vanilla JS puro**, nessun framework/build. Solo Google
   Identity Services per OAuth. No backend.
-- Hosting: GitHub Pages → `https://dantemanonquello.github.io/sgfemassdante/`
+- Hosting: GitHub Pages → `https://manonqueldante.github.io/Massaggiatore/`
+  (il vecchio `dantemanonquello.github.io/sgfemassdante` NON esiste/non conta).
 - Integrazioni Google: Calendar, Drive (`drive.file`), People/Contacts, Sheets.
 
 ## Convenzioni

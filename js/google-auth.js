@@ -46,8 +46,8 @@
    CHANGELOG 2.2.24:
    - ✅ FIX DEFINITIVO: Nuovo Client ID OAuth dedicato al progetto
    - ✅ Client ID: 432043907250-1p21bdmnebrjfa541kik7eosork5etpe
-   - ✅ Origin autorizzato: https://dantemanonquello.github.io
-   - ✅ Redirect URI: https://dantemanonquello.github.io/sgfemassdante/
+   - ✅ Origin autorizzato: https://manonqueldante.github.io
+   - ✅ Redirect URI: https://manonqueldante.github.io/Massaggiatore/
    
    CHANGELOG 2.2.23:
    - ✅ FIX CRITICO: REDIRECT_URI hardcodato per sgfemassdante
@@ -80,12 +80,14 @@
 // Progetto: Massaggiatore
 // Creato: 13 gennaio 2026
 // URI JavaScript autorizzati:
-//   - https://dantemanonquello.github.io
+//   - https://manonqueldante.github.io
 // URI di reindirizzamento autorizzati:
 //   - (verranno aggiunti automaticamente dalla schermata di consenso)
 const GOOGLE_CLIENT_ID = '432043907250-1p21bdmnebrjfa541kik7eosork5etpe.apps.googleusercontent.com';
-// FIX 2.2.23: REDIRECT_URI hardcodato per sgfemassdante (non più dinamico)
-const REDIRECT_URI = 'https://dantemanonquello.github.io/sgfemassdante/';
+// v2.5.52: REDIRECT_URI allineato alla URL reale di hosting (manonqueldante).
+// Il vecchio dantemanonquello.github.io/sgfemassdante/ era morto e generava il
+// falso "Timeout autenticazione dopo 10s" nei log.
+const REDIRECT_URI = 'https://manonqueldante.github.io/Massaggiatore/';
 const GOOGLE_API_KEY = 'AIzaSyDm2z0X0d6a73Uhe9wZpFLkZqnVY3EAJuQ';
 const SCOPES = [
     'https://www.googleapis.com/auth/userinfo.profile',

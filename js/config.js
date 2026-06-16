@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.51',
-    fullName: 'v2.5.51 by Dante',
+    version: '2.5.52',
+    fullName: 'v2.5.52 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - FIX LOGIN PERSISTENTE (il vero bug): il token ripristinato da localStorage non veniva passato a gapi.client, quindi People/Calendar/Drive partivano senza autorizzazione → 401 → l\'app lo scambiava per token morto e rifaceva login + permessi a OGNI reload. Aggiunta setGapiToken() che aggancia il token a gapi.client nel ripristino sessione, nel login fresco e lo scollega al logout. Ora i reload entro l\'ora sono silenziosi e dopo l\'ora si rinnova senza popup.'
+    lastUpdate: '2026-06-16 - Allineato dominio reale: REDIRECT_URI, origin autorizzato e repo GitHub ora puntano a manonqueldante.github.io/Massaggiatore/ (il vecchio dantemanonquello.github.io/sgfemassdante era morto e generava il falso "Timeout autenticazione 10s"). Segue v2.5.51 (fix login persistente: setGapiToken aggancia il token a gapi.client → niente più re-login a ogni reload).'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
@@ -18,9 +18,9 @@ const APP_CONFIG = {
 const GITHUB_CONFIG = {
     enabled: false, // Disabilitato - push manuale con token fornito dall'utente
     token: '', // Nessun token salvato nel codice
-    repo: 'DanteManonquello/sgfemassdante',
+    repo: 'MaNonQuelDante/Massaggiatore',
     branch: 'main',
-    username: 'DanteManonquello'
+    username: 'MaNonQuelDante'
 };
 
 // Funzione per decodificare token (usata da github-auto-push.js)
