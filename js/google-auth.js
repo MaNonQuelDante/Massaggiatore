@@ -93,6 +93,7 @@ const SCOPES = [
     'https://www.googleapis.com/auth/contacts',           // Lettura/scrittura contatti Google
     'https://www.googleapis.com/auth/calendar',           // Lettura/scrittura calendario (non più readonly)
     'https://www.googleapis.com/auth/drive.file',         // Accesso file Drive creati dall'app
+    'https://www.googleapis.com/auth/drive.appdata',      // v2.5.50: REQUISITO per lo spazio appDataFolder usato da DriveStorage (cronologia & co.). Senza questo scope ogni read/write su Drive falliva con 403 e i dati restavano solo in localStorage.
     'https://www.googleapis.com/auth/spreadsheets'        // Lettura/scrittura Google Sheets
 ].join(' ');
 

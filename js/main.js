@@ -976,52 +976,57 @@ window.fillFormFromDolceParanoia = function(index) {
 };
 
 // ===== CRONOLOGIA =====
+// v2.5.50: normalizza un telefono in sole cifre, formato internazionale, per wa.me.
+// - rimuove spazi, +, e ogni carattere non numerico;
+// - se è un numero italiano a 10 cifre senza prefisso, antepone 39.
+function waDigitsFromPhone(telefono) {
+    let d = (telefono || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (d.length === 10 && !d.startsWith('39')) d = '39' + d;
+    return d;
+}
+
 async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, societa, canale) {
     // canale (v2.5.45): 'whatsapp' = inviato su WhatsApp, 'generato' = generato/copiato. Default 'generato'.
     canale = canale || 'generato';
-    // SOLO DRIVE - Nessun localStorage
+
+    // v2.5.50: STORAGE 100% CLOUD. La cronologia vive SOLO su Google Drive: niente
+    // backup localStorage (l'unica cosa che resta in locale è il token Google).
     let cronologia = [];
-    
-    // 🔥 FIX v2.5.14: Carica da Drive O localStorage (backup)
-    if (window.DriveStorage && window.accessToken) {
-        try {
-            const driveData = await window.DriveStorage.load(STORAGE_KEYS.CRONOLOGIA);
-            if (driveData) {
-                cronologia = driveData;
-                console.log('📂 Caricati', cronologia.length, 'messaggi da Drive');
-            }
-        } catch (error) {
-            console.error('❌ Drive fallito, uso localStorage:', error);
-            const localData = localStorage.getItem(STORAGE_KEYS.CRONOLOGIA);
-            if (localData) {
-                cronologia = JSON.parse(localData);
-                console.log('📂 Fallback localStorage:', cronologia.length, 'messaggi');
-            }
-        }
-    } else {
-        // BACKUP: carica da localStorage se non loggato
-        const localData = localStorage.getItem(STORAGE_KEYS.CRONOLOGIA);
-        if (localData) {
-            cronologia = JSON.parse(localData);
-            console.log('📂 Caricati', cronologia.length, 'messaggi da localStorage (offline)');
-        }
-        console.warn('⚠️ Non loggato Google: cronologia salvata SOLO localmente');
+
+    if (!(window.DriveStorage && window.accessToken)) {
+        console.warn('⚠️ Non loggato Google: impossibile salvare la cronologia su cloud.');
+        showNotification('⚠️ Fai login Google per salvare la cronologia (storage cloud).', 'warning');
+        return;
     }
-    
+
+    try {
+        const driveData = await window.DriveStorage.load(STORAGE_KEYS.CRONOLOGIA);
+        if (Array.isArray(driveData)) {
+            cronologia = driveData;
+            console.log('📂 Caricati', cronologia.length, 'messaggi da Drive');
+        }
+    } catch (error) {
+        console.error('❌ Errore lettura cronologia da Drive:', error);
+    }
+
     // Aggiungi nuovo entry
     const tipoMessaggio = document.getElementById('tipoMessaggio').value;
+    const waDigits = waDigitsFromPhone(telefono); // sole cifre, formato internazionale (es. 39333...)
     const entry = {
         id: Date.now(),
         timestamp: new Date().toISOString(),
         nome: nome,
         cognome: cognome,
         telefono: telefono,
+        numeroInternazionale: waDigits ? '+' + waDigits : (telefono || ''), // +39…
+        waLink: waDigits ? 'https://wa.me/' + waDigits : '',                 // link chat WhatsApp
         messaggio: messaggio,
         servizio: servizio || '',
         societa: societa || '',
         tipoMessaggio: tipoMessaggio || 'primo_messaggio'
     };
-    
+
     cronologia.unshift(entry);
 
     // v2.5.45: report attività sul lead — traccia QUALE messaggio + COME (canale) + QUANDO (ts in logActivity).
@@ -1042,22 +1047,15 @@ async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, so
         cronologia = cronologia.slice(0, 1000);
     }
     
-    // 🔥 FIX v2.5.14: Salva su Drive E localStorage (backup)
-    // 1. Salva SEMPRE su localStorage (backup locale)
-    localStorage.setItem(STORAGE_KEYS.CRONOLOGIA, JSON.stringify(cronologia));
-    console.log('💾 Salvato localStorage backup:', cronologia.length, 'messaggi');
-    
-    // 2. Prova a salvare su Drive (se loggato)
-    if (window.DriveStorage && window.accessToken) {
-        try {
-            await window.DriveStorage.save(STORAGE_KEYS.CRONOLOGIA, cronologia);
-            console.log('✅ Cronologia salvata su Drive:', cronologia.length, 'messaggi');
-        } catch (error) {
-            console.error('❌ Drive fallito (403?), dati comunque su localStorage:', error);
-            mostraNotifica('⚠️ Messaggio salvato localmente (Drive non disponibile)', 'warning');
-        }
-    } else {
-        console.log('💾 Salvato SOLO localStorage (non loggato Google)');
+    // v2.5.50: salvataggio SOLO su Google Drive (cloud). Append-only: scriviamo
+    // l'intero array (storico esistente + nuova entry in testa), senza mai
+    // sovrascrivere/alterare le entry già presenti.
+    try {
+        await window.DriveStorage.save(STORAGE_KEYS.CRONOLOGIA, cronologia);
+        console.log('✅ Cronologia salvata su Drive:', cronologia.length, 'messaggi');
+    } catch (error) {
+        console.error('❌ Errore salvataggio cronologia su Drive:', error);
+        showNotification('⚠️ Impossibile salvare la cronologia su cloud (riprova).', 'warning');
     }
     
     // Marca lead come contattato
@@ -1099,62 +1097,114 @@ async function markLeadAsContactedFromCalendar(nome, cognome, telefono) {
     }
 }
 
+// v2.5.50: cache in memoria della cronologia caricata da Drive (per non rifare la
+// fetch ad ogni cambio data). Lo storage persistente resta 100% su cloud.
+let cronologiaCache = [];
+let cronologiaWired = false;
+
+// Chiave data locale YYYY-MM-DD (per confronto col date picker, che è in ora locale).
+function localDateKey(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
 async function loadCronologia() {
-    // SOLO DRIVE - Nessun localStorage fallback
-    let cronologia = [];
-    
-    // Carica da Drive
-    if (window.DriveStorage && window.accessToken) {
+    const listContainer = document.getElementById('cronologiaList');
+    const dateInput = document.getElementById('cronologiaDate');
+    if (!listContainer) return;
+
+    // Default date picker = oggi
+    if (dateInput && !dateInput.value) {
+        dateInput.value = localDateKey(new Date());
+    }
+
+    // Aggancia (una sola volta) i listener del selettore data
+    if (!cronologiaWired && dateInput) {
+        dateInput.addEventListener('change', renderCronologia);
+        const todayBtn = document.getElementById('cronologiaTodayBtn');
+        if (todayBtn) {
+            todayBtn.addEventListener('click', () => {
+                dateInput.value = localDateKey(new Date());
+                renderCronologia();
+            });
+        }
+        cronologiaWired = true;
+    }
+
+    if (!window.accessToken) {
+        cronologiaCache = [];
+        listContainer.innerHTML = '<p class="placeholder-text">⚠️ Fai login Google per vedere la cronologia (i messaggi sono salvati su cloud).</p>';
+        return;
+    }
+
+    // Carica SOLO da Drive (storage cloud)
+    listContainer.innerHTML = '<p class="placeholder-text">Caricamento…</p>';
+    cronologiaCache = [];
+    if (window.DriveStorage) {
         try {
             const driveData = await window.DriveStorage.load(STORAGE_KEYS.CRONOLOGIA);
-            if (driveData) {
-                cronologia = driveData;
-                console.log('✅ Cronologia caricata da Drive:', cronologia.length, 'messaggi');
+            if (Array.isArray(driveData)) {
+                cronologiaCache = driveData;
+                console.log('✅ Cronologia caricata da Drive:', cronologiaCache.length, 'messaggi');
             }
         } catch (error) {
             console.error('❌ Errore caricamento cronologia:', error);
         }
     }
-    
+
+    renderCronologia();
+}
+
+// v2.5.50: mostra le entry della data selezionata, dalla più recente alla più vecchia.
+function renderCronologia() {
     const listContainer = document.getElementById('cronologiaList');
-    
-    if (!window.accessToken) {
-        listContainer.innerHTML = '<p class="placeholder-text">⚠️ Fai login Google per vedere la cronologia</p>';
+    const dateInput = document.getElementById('cronologiaDate');
+    if (!listContainer) return;
+
+    const selected = (dateInput && dateInput.value) ? dateInput.value : localDateKey(new Date());
+
+    const entries = cronologiaCache
+        .filter(e => e && e.timestamp && localDateKey(new Date(e.timestamp)) === selected)
+        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    if (entries.length === 0) {
+        listContainer.innerHTML = '<p class="placeholder-text">Nessun messaggio inviato in questa data.</p>';
         return;
     }
-    
-    if (cronologia.length === 0) {
-        listContainer.innerHTML = '<p class="placeholder-text">Nessun messaggio inviato ancora...</p>';
-        return;
-    }
-    
+
     let html = '';
-    cronologia.forEach(entry => {
+    entries.forEach(entry => {
         const date = new Date(entry.timestamp);
-        const dateStr = date.toLocaleDateString('it-IT');
         const timeStr = date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-        
-        // Determina badge tipo messaggio
-        const tipoLabel = entry.tipoMessaggio === 'memo_giorno' ? 'Memo' : 'Primo Msg';
-        const tipoBadge = entry.tipoMessaggio === 'memo_giorno' 
-            ? '<span style="display:inline-block;padding:2px 8px;background:#dbeafe;color:#1e40af;border-radius:12px;font-size:11px;font-weight:600;margin-left:8px;">📝 Memo</span>'
-            : '<span style="display:inline-block;padding:2px 8px;background:#dcfce7;color:#166534;border-radius:12px;font-size:11px;font-weight:600;margin-left:8px;">💬 Primo Msg</span>';
-        
+        const nomeCompleto = `${entry.nome || ''} ${entry.cognome || ''}`.trim() || 'Senza nome';
+
+        // Retro-compatibilità: le entry vecchie non hanno numeroInternazionale/waLink → li ricavo al volo.
+        const waDigits = (entry.waLink ? entry.waLink.replace(/\D/g, '') : '') || waDigitsFromPhone(entry.telefono);
+        const numeroVis = entry.numeroInternazionale || (waDigits ? '+' + waDigits : (entry.telefono || '—'));
+        const waLink = entry.waLink || (waDigits ? 'https://wa.me/' + waDigits : '');
+
+        const linkHtml = waLink
+            ? `<a href="${waLink}" target="_blank" rel="noopener" class="cronologia-wa-link"><i class="fab fa-whatsapp"></i> Apri chat</a>`
+            : '<span class="cronologia-wa-missing">numero assente</span>';
+
+        const tipoBadge = entry.tipoMessaggio === 'memo_giorno'
+            ? '<span class="cronologia-badge cronologia-badge-memo">📝 Memo</span>'
+            : '<span class="cronologia-badge cronologia-badge-primo">💬 Primo Msg</span>';
+
         html += `
             <div class="cronologia-item">
                 <div class="cronologia-header">
-                    <strong>${entry.nome} ${entry.cognome || ''}</strong>${tipoBadge}
-                    <span style="font-size: 13px; color: var(--gray-500);">
-                        <i class="fas fa-calendar"></i> ${dateStr} ${timeStr}
-                    </span>
+                    <strong>${timeStr} · ${nomeCompleto}</strong>${tipoBadge}
+                    <span class="cronologia-numero">${numeroVis}</span>
                 </div>
-                <div class="cronologia-message">
-                    ${entry.messaggio.replace(/\n/g, '<br>')}
-                </div>
+                <div class="cronologia-actions">${linkHtml}</div>
+                <div class="cronologia-message">${(entry.messaggio || '').replace(/\n/g, '<br>')}</div>
             </div>
         `;
     });
-    
+
     listContainer.innerHTML = html;
 }
 

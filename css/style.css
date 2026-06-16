@@ -716,6 +716,106 @@ body {
     font-size: 14px;
 }
 
+/* ===== CRONOLOGIA — selettore data + riga messaggio (v2.5.50) ===== */
+.cronologia-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+    padding: 14px 16px;
+    background: var(--gray-100);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-md);
+}
+
+.cronologia-toolbar label {
+    font-weight: 600;
+    color: var(--gray-700);
+}
+
+.cronologia-date-input {
+    padding: 8px 12px;
+    border: 2px solid var(--gray-200);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--gray-800);
+    background: #fff;
+}
+
+.cronologia-date-input:focus {
+    outline: none;
+    border-color: var(--bg-gradient-end);
+}
+
+.cronologia-today-btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+    color: #fff;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.cronologia-today-btn:hover {
+    opacity: 0.9;
+}
+
+.cronologia-numero {
+    font-size: 13px;
+    color: var(--gray-500);
+    font-variant-numeric: tabular-nums;
+}
+
+.cronologia-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 8px;
+}
+
+.cronologia-badge-memo {
+    background: #ede9fe;
+    color: var(--bg-gradient-end);
+}
+
+.cronologia-badge-primo {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.cronologia-actions {
+    margin-bottom: 10px;
+}
+
+.cronologia-wa-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: var(--radius-sm);
+    background: var(--whatsapp-green);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.cronologia-wa-link:hover {
+    background: var(--whatsapp-teal);
+}
+
+.cronologia-wa-missing {
+    font-size: 12px;
+    color: var(--gray-400);
+    font-style: italic;
+}
+
 /* ===== LEAD (storico azioni per lead) ===== */
 .lead-azioni {
     display: flex;

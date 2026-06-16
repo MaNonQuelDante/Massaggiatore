@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.49',
-    fullName: 'v2.5.49 by Dante',
+    version: '2.5.50',
+    fullName: 'v2.5.50 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - FIX foto profilo / login Google: getUserInfo non maschera più il 401 (token morto) ma lo rilancia, così parte il rinnovo silenzioso invece di restare loggati con token scaduto; foto profilo con fallback ad avatar-iniziale (SVG) e referrerPolicy no-referrer → l\'immagine non resta mai rotta quando sei loggato'
+    lastUpdate: '2026-06-16 - CRONOLOGIA 100% CLOUD: log dei messaggi inviati con date picker (default oggi), ordine dal più recente, riga con orario/nome/numero +39 e link wa.me cliccabile; ogni entry salva numero internazionale e link chat. Causa "cronologia vuota" risolta: aggiunto lo scope OAuth drive.appdata (mancava → lo storage appDataFolder falliva con 403). Rimosso il backup localStorage della cronologia (storage cloud-only; in locale resta solo il token Google).'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
