@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.50',
-    fullName: 'v2.5.50 by Dante',
+    version: '2.5.51',
+    fullName: 'v2.5.51 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - CRONOLOGIA 100% CLOUD: log dei messaggi inviati con date picker (default oggi), ordine dal più recente, riga con orario/nome/numero +39 e link wa.me cliccabile; ogni entry salva numero internazionale e link chat. Causa "cronologia vuota" risolta: aggiunto lo scope OAuth drive.appdata (mancava → lo storage appDataFolder falliva con 403). Rimosso il backup localStorage della cronologia (storage cloud-only; in locale resta solo il token Google).'
+    lastUpdate: '2026-06-16 - FIX LOGIN PERSISTENTE (il vero bug): il token ripristinato da localStorage non veniva passato a gapi.client, quindi People/Calendar/Drive partivano senza autorizzazione → 401 → l\'app lo scambiava per token morto e rifaceva login + permessi a OGNI reload. Aggiunta setGapiToken() che aggancia il token a gapi.client nel ripristino sessione, nel login fresco e lo scollega al logout. Ora i reload entro l\'ora sono silenziosi e dopo l\'ora si rinnova senza popup.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

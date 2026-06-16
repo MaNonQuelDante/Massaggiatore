@@ -426,7 +426,10 @@ async function handleAuthResponse(resp) {
 
     accessToken = resp.access_token;
     window.accessToken = accessToken;
-    
+    // v2.5.51: aggancia subito il token a gapi.client (robustezza: non dipendere
+    // dal fatto che lo faccia GIS in automatico).
+    setGapiToken(accessToken);
+
     // ===== PERSISTENZA TOKEN (localStorage) =====
     const expiresIn = resp.expires_in || 3600; // secondi (default 1 ora)
     const expiresAt = Date.now() + (expiresIn * 1000);
@@ -606,6 +609,9 @@ function tryRestoreSession() {
 function useRestoredToken(token, expiresAt) {
     accessToken = token;
     window.accessToken = token;
+    // v2.5.51: QUI stava il bug — senza questo, gapi.client non aveva il token
+    // ripristinato e people/me tornava 401 → login forzato a ogni reload.
+    setGapiToken(token);
 
     // Setup timer (auto-refresh + keep-alive) sul tempo residuo
     const remainingSeconds = Math.floor((expiresAt - Date.now()) / 1000);
@@ -682,13 +688,33 @@ function clearStoredToken() {
     }
 }
 
+// ===== v2.5.51: PROPAGA IL TOKEN A gapi.client =====
+// IL BUG: il token preso FRESCO dal popup GIS veniva attaccato a gapi.client
+// automaticamente da GIS; quello RIPRISTINATO da localStorage no. Risultato:
+// ogni chiamata gapi (People/Calendar/Drive) partiva senza Authorization →
+// 401 → l'app lo scambiava per "token morto", lo buttava e rifaceva login a
+// OGNI reload. Impostandolo a mano qui, anche la sessione ripristinata è
+// subito autenticata e i reload restano silenziosi. Passare null = scollega.
+function setGapiToken(token) {
+    try {
+        if (window.gapi && gapi.client) {
+            gapi.client.setToken(token ? { access_token: token } : null);
+        }
+    } catch (e) {
+        console.warn('⚠️ Impossibile impostare il token su gapi.client:', e);
+    }
+}
+
 function handleSignoutClick() {
     if (accessToken) {
         google.accounts.oauth2.revoke(accessToken);
         accessToken = null;
         window.accessToken = null;
     }
-    
+    // v2.5.51: scollega anche il token da gapi.client, così non resta un token
+    // revocato attaccato alle chiamate API dopo il logout.
+    setGapiToken(null);
+
     // Cancella timer auto-refresh
     if (tokenRefreshTimer) {
         clearTimeout(tokenRefreshTimer);
