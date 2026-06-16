@@ -495,7 +495,15 @@ async function saveHomeSelectedCalendars(sel) {
     if (window.logActivity) window.logActivity('calendari_aggiornati', { count: sel.length });
 }
 
-// ===== POPOLA CHECKBOX CALENDARI NELLA HOME (v2.5.40: multi-select) =====
+// ===== POPOLA DROPDOWN CALENDARI NELLA HOME (v2.5.54: dropdown compatto a riga singola) =====
+// Sostituisce la lista di checkbox sempre aperta con un trigger su singola riga
+// (icona calendario + label della selezione + chevron) che apre un menù a tendina
+// multi-select. Chiusura al click fuori.
+// ⚠️ REGOLA: questa funzione NON scrive MAI in cloud/localStorage — fa solo lettura/render.
+// Il salvataggio avviene SOLO su interazione utente (toggle checkbox o azioni
+// "Seleziona/Deseleziona tutti"). Così distinguiamo "sto ancora caricando da Drive"
+// da "l'utente ha scelto vuoto" e non sovrascriviamo per sbaglio una selezione reale
+// che stava ancora arrivando dal cloud durante l'init.
 function populateHomeCalendarDropdown(calendars) {
     const container = document.getElementById('homeCalendarFilterCheckboxes');
     if (!container) return;
@@ -507,35 +515,58 @@ function populateHomeCalendarDropdown(calendars) {
         return;
     }
 
-    // Carica selezione salvata (chiave dedicata HOME, separata dalla pagina Calendario)
+    // Carica selezione salvata (chiave dedicata HOME, separata dalla pagina Calendario).
+    // v2.5.54: MAI default a "tutti". Se non c'è nulla di salvato si parte da selezione
+    // VUOTA — nessun calendario, nessun evento mostrato finché l'utente non sceglie.
+    // NESSUN salvataggio qui (vedi nota sopra: loading vs vuoto).
     let selected = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS) || 'null');
-    // Prima volta: tutti selezionati di default
-    if (!Array.isArray(selected)) {
-        selected = calendars.map(c => c.id);
-        saveHomeSelectedCalendars(selected); // v2.5.44: salva anche su Drive
+    if (!Array.isArray(selected)) selected = [];
+
+    // Label del trigger in base alla selezione corrente
+    function computeLabel(sel) {
+        const chosen = calendars.filter(c => sel.includes(c.id));
+        if (chosen.length === 0) return 'Nessun calendario';
+        const joined = chosen.map(c => c.summary).join(', ');
+        if (chosen.length <= 2 && joined.length <= 30) return joined;
+        return `${chosen.length} calendari selezionati`;
     }
 
-    const allChecked = calendars.length > 0 && calendars.every(c => selected.includes(c.id));
-
-    // HTML: master "Tutti i Calendari" + una checkbox per calendario (stile pagina Calendario)
-    let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
-    html += `
-        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; border-bottom: 1px solid var(--gray-200, #e5e7eb); padding-bottom: 6px;">
-            <input type="checkbox" id="homeCalAllCheckbox" ${allChecked ? 'checked' : ''} style="cursor: pointer;">
-            <span style="color: var(--gray-800, #1f2937);">Tutti i Calendari</span>
-        </label>
+    // ----- Markup: trigger compatto su singola riga + menù a tendina -----
+    let html = `
+        <button type="button" class="cal-dropdown-trigger" id="homeCalDropdownTrigger" aria-expanded="false">
+            <i class="fas fa-calendar-alt"></i>
+            <span class="cal-dropdown-label">${computeLabel(selected)}</span>
+            <i class="fas fa-chevron-down cal-dropdown-chevron"></i>
+        </button>
+        <div class="cal-dropdown-menu" id="homeCalDropdownMenu" hidden>
+            <div class="cal-dropdown-actions">
+                <button type="button" class="cal-dropdown-action" data-action="all">Seleziona tutti</button>
+                <span class="cal-dropdown-sep">·</span>
+                <button type="button" class="cal-dropdown-action" data-action="none">Deseleziona tutti</button>
+            </div>
     `;
     calendars.forEach(calendar => {
         const isChecked = selected.includes(calendar.id);
         html += `
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="checkbox" class="home-calendar-checkbox" data-calendar-id="${calendar.id}" ${isChecked ? 'checked' : ''} style="cursor: pointer;">
-                <span style="color: var(--gray-700, #374151);">${calendar.summary}</span>
+            <label class="cal-dropdown-item">
+                <input type="checkbox" class="home-calendar-checkbox" data-calendar-id="${calendar.id}" ${isChecked ? 'checked' : ''}>
+                <span>${calendar.summary}</span>
             </label>
         `;
     });
     html += '</div>';
     container.innerHTML = html;
+
+    const trigger = document.getElementById('homeCalDropdownTrigger');
+    const menu = document.getElementById('homeCalDropdownMenu');
+    const labelEl = container.querySelector('.cal-dropdown-label');
+
+    // Aggiorna la label del trigger leggendo lo stato attuale delle checkbox
+    function refreshLabel() {
+        const sel = Array.from(container.querySelectorAll('.home-calendar-checkbox'))
+            .filter(cb => cb.checked).map(cb => cb.dataset.calendarId);
+        if (labelEl) labelEl.textContent = computeLabel(sel);
+    }
 
     // Aggiorna subito la lista appuntamenti/tendina lead della home
     async function applyHomeCalendarChange() {
@@ -545,42 +576,64 @@ function populateHomeCalendarDropdown(calendars) {
         }
     }
 
-    // Listener: checkbox singola calendario
+    // Apri/chiudi il menù a tendina
+    function openMenu()  { if (menu) menu.hidden = false; if (trigger) { trigger.setAttribute('aria-expanded', 'true');  trigger.classList.add('open'); } }
+    function closeMenu() { if (menu) menu.hidden = true;  if (trigger) { trigger.setAttribute('aria-expanded', 'false'); trigger.classList.remove('open'); } }
+
+    if (trigger) {
+        trigger.addEventListener('click', function() {
+            if (menu && menu.hidden) openMenu(); else closeMenu();
+        });
+    }
+
+    // Listener: checkbox singola calendario (QUI sì che si salva: è azione utente esplicita)
     container.querySelectorAll('.home-calendar-checkbox').forEach(cb => {
         cb.addEventListener('change', async function() {
-            let sel = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS) || '[]');
-            const id = this.dataset.calendarId;
-            if (this.checked) {
-                if (!sel.includes(id)) sel.push(id);
-            } else {
-                sel = sel.filter(x => x !== id);
-            }
-            await saveHomeSelectedCalendars(sel); // v2.5.44: locale + Drive + report
-            // Aggiorna stato del master "Tutti"
-            const allCb = document.getElementById('homeCalAllCheckbox');
-            if (allCb) allCb.checked = calendars.length > 0 && calendars.every(c => sel.includes(c.id));
+            const sel = Array.from(container.querySelectorAll('.home-calendar-checkbox'))
+                .filter(x => x.checked).map(x => x.dataset.calendarId);
+            await saveHomeSelectedCalendars(sel); // locale + Drive + report
+            refreshLabel();
             await applyHomeCalendarChange();
             console.log('📅 [HOME] Calendari spuntati:', sel.length);
         });
     });
 
-    // Listener: master "Tutti i Calendari" (spunta/deseleziona tutti)
-    const allCb = document.getElementById('homeCalAllCheckbox');
-    if (allCb) {
-        allCb.addEventListener('change', async function() {
-            const sel = this.checked ? calendars.map(c => c.id) : [];
-            await saveHomeSelectedCalendars(sel); // v2.5.44: locale + Drive + report
-            container.querySelectorAll('.home-calendar-checkbox').forEach(cb => { cb.checked = this.checked; });
+    // Listener: azioni "Seleziona tutti / Deseleziona tutti" (azione, NON stato di default)
+    container.querySelectorAll('.cal-dropdown-action').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const all = this.dataset.action === 'all';
+            container.querySelectorAll('.home-calendar-checkbox').forEach(cb => { cb.checked = all; });
+            const sel = all ? calendars.map(c => c.id) : [];
+            await saveHomeSelectedCalendars(sel); // locale + Drive + report
+            refreshLabel();
             await applyHomeCalendarChange();
-            console.log('📅 [HOME] Tutti i calendari:', this.checked ? 'ON' : 'OFF');
+            console.log('📅 [HOME] Azione calendari:', all ? 'tutti' : 'nessuno');
         });
+    });
+
+    // Chiudi al click fuori dal dropdown (listener globale registrato UNA sola volta,
+    // così non si impila a ogni re-render; legge gli elementi correnti per id)
+    if (!window.__homeCalDropdownOutsideBound) {
+        document.addEventListener('click', function(e) {
+            const root = document.getElementById('homeCalendarFilterCheckboxes');
+            const m = document.getElementById('homeCalDropdownMenu');
+            const t = document.getElementById('homeCalDropdownTrigger');
+            if (!root || !m || m.hidden) return;
+            if (!root.contains(e.target)) {
+                m.hidden = true;
+                if (t) { t.setAttribute('aria-expanded', 'false'); t.classList.remove('open'); }
+            }
+        });
+        window.__homeCalDropdownOutsideBound = true;
     }
 
-    console.log(`✅ Checkbox calendari home popolate (${calendars.length} calendari)`);
+    console.log(`✅ Dropdown calendari home popolato (${calendars.length} calendari, ${selected.length} selezionati)`);
 }
 
 // ===== GET CALENDARI SELEZIONATI NELLA HOME (v2.5.40: multi-select) =====
-// Ritorna un array di id selezionati. null = mai impostato => mostra tutti.
+// Ritorna un array di id selezionati, oppure null se mai impostato.
+// v2.5.54: null/non-array NON significa più "tutti": il consumer lo tratta come
+// selezione VUOTA (nessun evento). Mai default a tutti i calendari.
 function getHomeSelectedCalendar() {
     const json = localStorage.getItem(STORAGE_KEYS_CALENDAR.HOME_SELECTED_CALENDARS);
     if (json === null) return null;
@@ -694,8 +747,10 @@ async function updateLeadSelectorByDate(dateString) {
         contactedLeads = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.CONTACTED_LEADS) || '[]');
     }
     
-    // Ottieni calendari selezionati nella home (v2.5.40: multi-select; null = tutti)
+    // Ottieni calendari selezionati nella home (v2.5.54: multi-select; MAI default a tutti).
+    // null/non-array (mai salvato) => nessun calendario selezionato => nessun evento mostrato.
     const homeCalendarFilter = getHomeSelectedCalendar();
+    const homeSelected = Array.isArray(homeCalendarFilter) ? homeCalendarFilter : [];
 
     // Filtra eventi per la data selezionata + escludi "X" + filtra per calendari home spuntati
     const dayEvents = allEvents.filter(event => {
@@ -703,8 +758,8 @@ async function updateLeadSelectorByDate(dateString) {
         const isCorrectDate = eventDate.toDateString() === selectedDate.toDateString();
         const isNotX = !shouldSkipEvent(event);
 
-        // null = tutti i calendari; array = solo quelli spuntati; [] = nessuno
-        const isSelectedCalendar = homeCalendarFilter === null || homeCalendarFilter.includes(event.calendarId);
+        // Solo i calendari spuntati. Selezione vuota = nessun evento (stato iniziale valido).
+        const isSelectedCalendar = homeSelected.includes(event.calendarId);
 
         return isCorrectDate && isNotX && isSelectedCalendar;
     });
@@ -712,7 +767,7 @@ async function updateLeadSelectorByDate(dateString) {
     console.log(`📅 Filtro applicato per ${dateString}:`);
     console.log(`   - Eventi dopo filtro data: ${allEvents.filter(e => new Date(e.start).toDateString() === selectedDate.toDateString()).length}`);
     console.log(`   - Eventi dopo esclusione "X": ${allEvents.filter(e => !shouldSkipEvent(e)).length}`);
-    console.log(`   - Calendario selezionato: ${homeCalendarFilter}`);
+    console.log(`   - Calendari selezionati: ${homeSelected.length} (${homeSelected.join(', ') || 'nessuno'})`);
     console.log(`   - Eventi finali per questo giorno: ${dayEvents.length}`);
     
     // Popola select - TUTTI I LEAD sempre visibili

@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.53',
-    fullName: 'v2.5.53 by Dante',
+    version: '2.5.54',
+    fullName: 'v2.5.54 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-16 - Rimossa la pagina "Cronologia" dal menu (lo storico vive ora nella sezione "Lead"): tolti voce menu, pagina #cronologiaContent e relative righe del router; saveToCronologia e lo storage CRONOLOGIA restano (servono alla sezione Lead). Aggiunto bottone WhatsApp diretto (wa.me) su ogni card lead.'
+    lastUpdate: '2026-06-16 - Filtro "Filtra per Calendario" (home) compattato in un dropdown multi-select a riga singola (icona + selezione + chevron, chiusura al click fuori) con persistenza cloud (Drive). MAI default a "tutti i calendari": utente nuovo = selezione vuota = nessun evento finché non sceglie. La funzione di render non scrive mai in cloud (distingue loading da vuoto): salva solo su azione utente.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
