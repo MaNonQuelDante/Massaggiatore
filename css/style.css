@@ -1789,3 +1789,52 @@ body {
     opacity: 0.6;
     cursor: not-allowed;
 }
+
+/* ===== v2.5.64: CODICE ID LEAD + DEEP-LINK SCHEDA ===== */
+/* Badge col codice ID (L0001…) accanto al nome nella card lead */
+.lead-code-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #fff;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 6px;
+    padding: 1px 7px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* Evidenziazione temporanea della card aperta da deep-link (?id=Lxxxx) */
+.lead-card-highlight {
+    animation: leadCardGlow 2.5s ease-out;
+    box-shadow: 0 0 0 3px #667eea, 0 0 18px rgba(102, 126, 234, 0.55);
+    border-radius: 12px;
+}
+@keyframes leadCardGlow {
+    0%   { box-shadow: 0 0 0 4px #667eea, 0 0 26px rgba(102, 126, 234, 0.85); }
+    100% { box-shadow: 0 0 0 0 rgba(102, 126, 234, 0); }
+}
+
+/* Toast leggero (es. "Lead Lxxxx non trovato") */
+.lead-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--gray-800);
+    color: #fff;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 14px;
+    box-shadow: var(--shadow-xl);
+    opacity: 0;
+    transition: opacity 0.35s ease, transform 0.35s ease;
+    z-index: 99999;
+    max-width: 90vw;
+    text-align: center;
+}
+.lead-toast-show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}

@@ -26,7 +26,11 @@ const DRIVE_FILES = {
     // cambia forma (zero migrazione). ATTENZIONE: il mapping DEVE esserci qui o save/load falliscono
     // in silenzio ("Key non valida") e il dato va perso al reload (stesso bug fixato in v2.5.59).
     LEAD_CONFIRMED: 'testmess_lead_confirmed.json',           // { "<leadKey>": true }
-    LEAD_CHECKLIST_TIMES: 'testmess_lead_checklist_times.json' // { "<leadKey>": { "<step>": ISO } }
+    LEAD_CHECKLIST_TIMES: 'testmess_lead_checklist_times.json', // { "<leadKey>": { "<step>": ISO } }
+    // v2.5.64: codice ID lead alfanumerico stabile (L0001…) per il deep-link scheda da Calendar.
+    // Stesso bug noto: il mapping DEVE esserci qui o save/load falliscono in silenzio ("Key non valida").
+    LEAD_CODES: 'testmess_lead_codes.json',              // { "<leadKey>": "<codice>" }
+    LEAD_CODE_COUNTER: 'testmess_lead_code_counter.json' // { "next": <ultimo intero assegnato> }
 };
 
 let driveInited = false;

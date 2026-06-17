@@ -16,7 +16,9 @@ const STORAGE_KEYS = {
     LEAD_CHECKLIST: 'LEAD_CHECKLIST', // v2.5.55: stato checkbox funnel-conferma per lead (cloud/Drive)
     LEAD_BINDINGS: 'LEAD_BINDINGS',   // v2.5.57: aggancio manuale lead↔evento "LEAD - Call" (cloud/Drive)
     LEAD_CONFIRMED: 'LEAD_CONFIRMED',           // v2.5.61: flag "Appuntamento confermato" per lead (cloud/Drive)
-    LEAD_CHECKLIST_TIMES: 'LEAD_CHECKLIST_TIMES' // v2.5.61: timestamp congelato 1ª spunta step funnel (cloud/Drive)
+    LEAD_CHECKLIST_TIMES: 'LEAD_CHECKLIST_TIMES', // v2.5.61: timestamp congelato 1ª spunta step funnel (cloud/Drive)
+    LEAD_CODES: 'LEAD_CODES',                     // v2.5.64: mappa _key→codice ID lead (cloud/Drive)
+    LEAD_CODE_COUNTER: 'LEAD_CODE_COUNTER'        // v2.5.64: counter codici lead { next: <ultimo assegnato> }
 };
 
 // ===== STORAGE WRAPPER (Google Drive o localStorage fallback) =====
@@ -96,6 +98,30 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Focus campo nome
     document.getElementById('nome').focus();
+
+    // v2.5.64: DEEP-LINK scheda lead da Google Calendar (?id=Lxxxx). Aprendo il link da qualsiasi
+    // device si atterra SEMPRE sulla card del lead: se già loggati subito, altrimenti appena auth
+    // è pronta. Il parametro NON viene consumato finché il focus non riesce, così se l'utente logga
+    // dopo si ritenta al prossimo evento auth-ready.
+    const wantedCode = new URLSearchParams(location.search).get('id');
+    if (wantedCode) {
+        const runDeepLinkFocus = async () => {
+            try {
+                // evidenzia la voce di menu "lead" per coerenza UI
+                document.querySelectorAll('.sidebar-link').forEach(l => l.classList.toggle('active', l.dataset.page === 'lead'));
+                await showPage('lead'); // carica e renderizza i lead (richiede auth)
+                const ok = focusLeadCard(wantedCode);
+                if (ok) window.removeEventListener('auth-ready', runDeepLinkFocus); // riuscito: smetti di ritentare
+            } catch (e) {
+                console.warn('⚠️ [v2.5.64] Deep-link focus fallito:', e);
+            }
+        };
+        if (window.isAuthReady) {
+            runDeepLinkFocus(); // già loggato: vai subito
+        } else {
+            window.addEventListener('auth-ready', runDeepLinkFocus); // aspetta il login, poi ritenta
+        }
+    }
 });
 
 // ===== SIDEBAR =====
@@ -1273,6 +1299,9 @@ let leadBindings = {};
 // NON deve riscaricare nulla da Drive.
 let leadSectionLeads = [];
 let leadSectionCandidates = [];
+// v2.5.64: codici ID lead (cloud). leadCodes = { "<_key>": "L0001" }; leadCodeCounter = ultimo intero assegnato.
+let leadCodes = {};
+let leadCodeCounter = 0;
 
 // Telefono → sole cifre significative (ultime 9, ovvero il numero senza prefisso 39/0039).
 // Serve SOLO a fare il match card-lead ↔ evento "LEAD - Call" in modo robusto al prefisso.
@@ -1280,6 +1309,25 @@ function leadPhone9(telefono) {
     const digits = (telefono || '').replace(/\D/g, '');
     return digits.length >= 9 ? digits.slice(-9) : '';
 }
+
+// v2.5.64: chiave identità lead CONDIVISA. DEVE restare identica alla derivazione storica usata
+// in loadLeadSection (raggruppamento cronologia) e in checklist/bindings/confirmed, altrimenti il
+// codice ID non si ritrova mai. tel:<solo cifre> se c'è telefono, altrimenti nome:<nome|cognome>.
+// Usata anche da google-calendar.js (markLeadAsContacted / ensureEventTitleCorrect) via window.
+function leadIdentityKey(telefono, nome, cognome) {
+    const telDigits = (telefono || '').replace(/\D/g, '');
+    return telDigits
+        ? 'tel:' + telDigits
+        : 'nome:' + ((nome || '') + '|' + (cognome || '')).toLowerCase().trim();
+}
+window.leadIdentityKey = leadIdentityKey;
+
+// v2.5.64: codice ID lead alfanumerico stabile. L + numero zero-padded a 4 cifre (L0001…); oltre
+// 9999 cresce senza pad (L10000). Un codice, una volta assegnato a una _key, NON cambia/riusa mai.
+function formatLeadCode(n) {
+    return 'L' + String(n).padStart(4, '0');
+}
+window.formatLeadCode = formatLeadCode;
 
 // v2.5.59: telefono lead → forma leggibile con prefisso internazionale, es.
 //   393394865982 → "+39 339 486 5982". Normalizza prima a sole cifre e toglie il 39/0039
@@ -1875,16 +1923,36 @@ async function loadLeadSection() {
         }
     }
 
+    // v2.5.64: codici ID lead (cloud/Drive). Mappa _key→codice + counter "next" (= ultimo intero
+    // assegnato). Il render NON assegna codici nuovi a parte il backfill dei lead storici qui sotto.
+    leadCodes = {};
+    leadCodeCounter = 0;
+    if (window.DriveStorage) {
+        try {
+            const savedCodes = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CODES);
+            if (savedCodes && typeof savedCodes === 'object') leadCodes = savedCodes;
+        } catch (error) {
+            console.error('❌ Errore caricamento codici lead:', error);
+        }
+        try {
+            const savedCounter = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CODE_COUNTER);
+            if (savedCounter && typeof savedCounter.next === 'number') leadCodeCounter = savedCounter.next;
+        } catch (error) {
+            console.error('❌ Errore caricamento counter codici lead:', error);
+        }
+    }
+    if (!leadCodeCounter) leadCodeCounter = Object.keys(leadCodes).length;
+    window.leadCodes = leadCodes;
+    window.leadCodeCounter = leadCodeCounter;
+
     // v2.5.55/57: candidati T0 dagli eventi "LEAD - Call" già sincronizzati in localStorage.
     leadSectionCandidates = buildLeadCallIndex().candidates;
 
-    // Raggruppa per lead: chiave = telefono (solo cifre) se presente, altrimenti nome+cognome
+    // Raggruppa per lead: chiave = telefono (solo cifre) se presente, altrimenti nome+cognome.
+    // v2.5.64: derivazione centralizzata in leadIdentityKey (stessa funzione usata da Calendar).
     const leadsMap = {};
     cronologia.forEach(entry => {
-        const telDigits = (entry.telefono || '').replace(/\D/g, '');
-        const key = telDigits
-            ? 'tel:' + telDigits
-            : 'nome:' + ((entry.nome || '') + '|' + (entry.cognome || '')).toLowerCase().trim();
+        const key = leadIdentityKey(entry.telefono, entry.nome, entry.cognome);
         if (!leadsMap[key]) {
             leadsMap[key] = { _key: key, nome: '', cognome: '', telefono: '', messaggi: [] };
         }
@@ -1905,6 +1973,34 @@ async function loadLeadSection() {
     });
     // Lead dal contatto più recente al più vecchio
     leads.sort((a, b) => b.ultimoContatto - a.ultimoContatto);
+
+    // v2.5.64: backfill codici per lead storici (creati prima di questa feature) ancora senza codice.
+    // Ordine deterministico = per timestamp del PRIMO messaggio crescente, così l'assegnazione è
+    // stabile e indipendente dall'ordine di iterazione. Un codice già assegnato non cambia mai.
+    let codesChanged = false;
+    const byFirstMsg = leads.slice().sort((a, b) => {
+        const fa = a.messaggi[0] ? new Date(a.messaggi[0].timestamp).getTime() : 0;
+        const fb = b.messaggi[0] ? new Date(b.messaggi[0].timestamp).getTime() : 0;
+        return fa - fb;
+    });
+    byFirstMsg.forEach(lead => {
+        if (!leadCodes[lead._key]) {
+            leadCodeCounter += 1;
+            leadCodes[lead._key] = formatLeadCode(leadCodeCounter);
+            codesChanged = true;
+        }
+    });
+    if (codesChanged && window.DriveStorage) {
+        window.leadCodes = leadCodes;
+        window.leadCodeCounter = leadCodeCounter;
+        try {
+            await window.DriveStorage.save(STORAGE_KEYS.LEAD_CODES, leadCodes);
+            await window.DriveStorage.save(STORAGE_KEYS.LEAD_CODE_COUNTER, { next: leadCodeCounter });
+            console.log('🆔 [v2.5.64] Codici lead backfill salvati su Drive (assegnati ai lead storici)');
+        } catch (error) {
+            console.error('❌ Errore salvataggio codici lead (backfill):', error);
+        }
+    }
 
     // Tieni i dati in memoria e renderizza (i re-render successivi NON riscaricano da Drive).
     leadSectionLeads = leads;
@@ -1993,6 +2089,10 @@ function renderLeadList() {
         const count = lead.messaggi.length;
         const keyAttr = encodeURIComponent(lead._key);
         const confirmed = !!leadConfirmedState[lead._key];
+        // v2.5.64: codice ID lead (deep-link da Calendar). Esposto sulla card come badge + attributo.
+        const leadCode = leadCodes[lead._key] || '';
+        lead._code = leadCode || null;
+        const codeBadge = leadCode ? ` <span class="lead-code-badge" title="Codice scheda lead">${leadCode}</span>` : '';
 
         // v2.5.55/57: blocco funnel-conferma. Risolve T0 con agganci manuali + automatico + proposte.
         // v2.5.61: calcolato PRIMA del log perché serve a datare la riga "ingresso" (usa T0).
@@ -2082,9 +2182,9 @@ function renderLeadList() {
             : '';
 
         html += `
-            <div class="cronologia-item">
+            <div class="cronologia-item" id="lead-card-${keyAttr}" data-lead-code="${leadCode}">
                 <div class="cronologia-header">
-                    <strong>${nomeCompleto}</strong>${apptHtml}
+                    <strong>${nomeCompleto}</strong>${codeBadge}${apptHtml}
                     <span style="font-size: 13px; color: var(--gray-500);">
                         <i class="fas fa-phone"></i> ${telefono} · ${count} ${count === 1 ? 'azione' : 'azioni'}
                         ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
@@ -2112,6 +2212,48 @@ function renderLeadList() {
     // v2.5.57: delega eventi agganciata una sola volta sul contenitore (sopravvive ai re-render).
     ensureLeadDelegation(listContainer);
 }
+
+// ===== v2.5.64: TOAST LEGGERO (nessuna libreria) =====
+// Crea al volo un div in basso al centro che si autorimuove. Usato dal deep-link per i casi limite.
+function showLeadToast(message) {
+    try {
+        const t = document.createElement('div');
+        t.className = 'lead-toast';
+        t.textContent = message;
+        document.body.appendChild(t);
+        requestAnimationFrame(() => t.classList.add('lead-toast-show')); // forza la transizione
+        setTimeout(() => {
+            t.classList.remove('lead-toast-show');
+            setTimeout(() => t.remove(), 400);
+        }, 3000);
+    } catch (e) {
+        console.warn('⚠️ toast fallito (ignorato):', e);
+    }
+}
+window.showLeadToast = showLeadToast;
+
+// ===== v2.5.64: DEEP-LINK — porta in vista ed evidenzia la card con codice ID = code =====
+// Usata dal link ?id=Lxxxx aperto da Google Calendar. Ritorna true se la card è stata trovata.
+function focusLeadCard(code) {
+    if (!code) return false;
+    let card = null;
+    try {
+        const sel = (window.CSS && CSS.escape) ? CSS.escape(code) : code;
+        card = document.querySelector('[data-lead-code="' + sel + '"]');
+    } catch (e) {
+        card = null;
+    }
+    if (!card) {
+        console.warn('⚠️ [v2.5.64] Deep-link: nessuna card con codice', code);
+        showLeadToast('Lead ' + code + ' non trovato nella lista');
+        return false;
+    }
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.classList.add('lead-card-highlight');
+    setTimeout(() => card.classList.remove('lead-card-highlight'), 2500);
+    return true;
+}
+window.focusLeadCard = focusLeadCard;
 
 // ===== ULTIMO MESSAGGIO =====
 async function saveLastMessage(nome, cognome, telefono) {

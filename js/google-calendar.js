@@ -1349,11 +1349,42 @@ async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, 
         } catch (error) {
             console.warn('⚠️ Drive fallito (403?), dati comunque salvati su localStorage:', error.message);
         }
-        
+
+        // 4.bis 🆔 v2.5.64: assegna (alla nascita del lead) un codice ID stabile e salvalo in cloud.
+        // Serve per il deep-link ?id=Lxxxx iniettato nell'evento Calendar. Un codice non si riusa mai:
+        // se la _key è già nella mappa, riuso il codice esistente. La _key usa leadIdentityKey (la
+        // STESSA della sezione Lead), così il codice creato qui si ritrova sulla card. Best-effort:
+        // un errore non blocca il flusso (leadCode resta null → nessun link rotto in descrizione).
+        let leadCode = null;
+        try {
+            if (window.DriveStorage && window.accessToken && window.leadIdentityKey && window.formatLeadCode) {
+                const key = window.leadIdentityKey(telefono, nome, cognome);
+                let codes = await window.DriveStorage.load('LEAD_CODES');
+                if (!codes || typeof codes !== 'object') codes = {};
+                if (codes[key]) {
+                    leadCode = codes[key]; // già assegnato: non riassegnare mai
+                } else {
+                    const counterObj = await window.DriveStorage.load('LEAD_CODE_COUNTER');
+                    let last = (counterObj && typeof counterObj.next === 'number') ? counterObj.next : Object.keys(codes).length;
+                    last += 1;
+                    leadCode = window.formatLeadCode(last);
+                    codes[key] = leadCode;
+                    await window.DriveStorage.save('LEAD_CODES', codes);
+                    await window.DriveStorage.save('LEAD_CODE_COUNTER', { next: last });
+                    window.leadCodeCounter = Math.max(window.leadCodeCounter || 0, last);
+                    console.log('🆔 [v2.5.64] Codice lead assegnato:', leadCode, key);
+                }
+                window.leadCodes = codes; // tieni allineata la mappa in memoria della sezione Lead
+            }
+        } catch (error) {
+            console.warn('⚠️ [v2.5.64] Assegnazione codice lead fallita (ignorata):', error.message);
+        }
+
         // 5. 🆕 v2.5.24: Aggiungi link WhatsApp nella descrizione evento
         // 🆕 v2.5.27: Rinomina evento con solo Nome Cognome
+        // 🆕 v2.5.64: passa leadCode → riga "📂 Scheda lead: …?id=Lxxxx"
         try {
-            await addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendarId);
+            await addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendarId, leadCode);
         } catch (error) {
             console.warn('⚠️ Non riesco ad aggiornare evento con link WhatsApp:', error.message);
         }
@@ -1372,7 +1403,7 @@ async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, 
 // ===== v2.5.24: AGGIUNGI LINK WHATSAPP NELLA DESCRIZIONE EVENTO =====
 // ===== v2.5.27: RINOMINA EVENTO CON SOLO NOME COGNOME =====
 // ===== v2.5.31: FIX - Rename SEMPRE attivo (anche eventi già esistenti) =====
-async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendarId) {
+async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendarId, leadCode) {
     if (!window.gapi || !window.gapi.client || !window.gapi.client.calendar) {
         console.warn('⚠️ Google Calendar API non inizializzata');
         return;
@@ -1405,26 +1436,38 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         });
         
         const currentDescription = event.result.description || '';
-        
+
+        // v2.5.64: link diretto alla scheda lead nell'app (?id=Lxxxx). Solo se ho il codice (niente
+        // link rotti se leadCode manca). origin+pathname reali → funziona su qualsiasi dominio/host.
+        const appLink = leadCode ? `${window.location.origin}${window.location.pathname}?id=${leadCode}` : '';
+        const schedaLine = appLink ? `📂 Scheda lead: ${appLink}` : '';
+
         // 2. Controlla se link già presente
         const needsWhatsAppLink = !currentDescription.includes('wa.me/');
-        
+        // v2.5.64: anche eventi vecchi (già con wa.me ma SENZA ?id=) ricevono la riga scheda al passaggio.
+        const needsLeadLink = !!appLink && !currentDescription.includes('?id=');
+
         // 3. 🆕 v2.5.27: Calcola nuovo titolo evento (solo Nome Cognome)
         const newTitle = cognome ? `${nome} ${cognome}`.trim() : nome;
         const currentTitle = event.result.summary || '';
         const needsTitleUpdate = currentTitle !== newTitle;
-        
+
         // 4. Prepara aggiornamenti
         const updates = {};
-        
+
         if (needsWhatsAppLink) {
-            // 🆕 v2.5.33: Aggiungi link WhatsApp IN CIMA alla descrizione
-            const newDescription = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
-                (currentDescription ? '\n\n' + currentDescription : '');
+            // 🆕 v2.5.33: link WhatsApp IN CIMA. 🆕 v2.5.64: + riga scheda lead (se ho il codice).
+            const block = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
+                (schedaLine ? '\n' + schedaLine : '');
+            const newDescription = block + (currentDescription ? '\n\n' + currentDescription : '');
             updates.description = newDescription;
-            console.log('📱 [v2.5.62] Aggiungo link WhatsApp + chiamata in cima:', whatsappLink, phoneLink);
+            console.log('📱 [v2.5.64] WhatsApp + chiamata' + (schedaLine ? ' + scheda lead' : '') + ' in cima');
+        } else if (needsLeadLink) {
+            // wa.me già presente ma manca la scheda: aggiungo SOLO la riga scheda in cima (idempotente).
+            updates.description = schedaLine + '\n' + currentDescription;
+            console.log('📂 [v2.5.64] Aggiunta riga scheda lead a evento esistente:', appLink);
         }
-        
+
         if (needsTitleUpdate) {
             updates.summary = newTitle;
             console.log('✏️ Rinomino evento:', currentTitle, '→', newTitle);
@@ -1494,40 +1537,50 @@ async function ensureEventTitleCorrect(event) {
         // 🆕 v2.5.32: Controlla se manca WhatsApp link
         const telefono = document.getElementById('telefono')?.value.trim();
         let whatsappNeedsUpdate = false;
-        
+        let leadLinkNeedsUpdate = false;
+
+        // v2.5.64: codice ID lead (read-only dalla mappa in memoria popolata dalla sezione Lead /
+        // da markLeadAsContacted). Qui NON creo codici nuovi: se non c'è ancora, salto la riga scheda
+        // (verrà aggiunta al primo contatto). Stessa leadIdentityKey usata ovunque.
+        const leadKey = (window.leadIdentityKey && telefono) ? window.leadIdentityKey(telefono, firstName, lastName) : null;
+        const leadCode = (leadKey && window.leadCodes) ? (window.leadCodes[leadKey] || null) : null;
+        const appLink = leadCode ? `${window.location.origin}${window.location.pathname}?id=${leadCode}` : '';
+        const schedaLine = appLink ? `📂 Scheda lead: ${appLink}` : '';
+
         if (telefono) {
-            // Verifica se evento ha già WhatsApp link
+            // Verifica se evento ha già WhatsApp link e/o riga scheda
             const currentEvent = await window.gapi.client.calendar.events.get({
                 calendarId: event.calendarId || 'primary',
                 eventId: event.id
             });
-            
+
             const currentDescription = currentEvent.result.description || '';
             whatsappNeedsUpdate = !currentDescription.includes('wa.me/');
-            
-            console.log('📱 [v2.5.32] Check WhatsApp:', { telefono, hasMaiLink: !whatsappNeedsUpdate });
+            leadLinkNeedsUpdate = !!appLink && !currentDescription.includes('?id=');
+
+            console.log('📱 [v2.5.64] Check descrizione:', { telefono, hasWa: !whatsappNeedsUpdate, needsScheda: leadLinkNeedsUpdate });
         }
-        
+
         // Se nulla da aggiornare, skip
-        if (!titleNeedsUpdate && !whatsappNeedsUpdate) {
+        if (!titleNeedsUpdate && !whatsappNeedsUpdate && !leadLinkNeedsUpdate) {
             return;
         }
-        
+
         // Prepara aggiornamenti
         const updates = {};
-        
+
         if (titleNeedsUpdate) {
             updates.summary = newTitle;
             console.log('✏️ [v2.5.32] Titolo evento da correggere:', event.summary, '→', newTitle);
         }
-        
-        if (whatsappNeedsUpdate && telefono) {
+
+        if ((whatsappNeedsUpdate || leadLinkNeedsUpdate) && telefono) {
             // Normalizza numero
             let phoneClean = telefono.replace(/\s+/g, '').replace(/^\+/, '');
             if (!phoneClean.startsWith('39') && phoneClean.length === 10) {
                 phoneClean = '39' + phoneClean;
             }
-            
+
             const whatsappLink = `https://wa.me/${phoneClean}`;
             const phoneLink = `tel:+${phoneClean}`;
             const currentEvent = await window.gapi.client.calendar.events.get({
@@ -1536,14 +1589,19 @@ async function ensureEventTitleCorrect(event) {
             });
 
             const currentDescription = currentEvent.result.description || '';
-            // 🆕 v2.5.62: WhatsApp + link chiamata classica (tel:) in CIMA alla descrizione
-            const newDescription = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
-                (currentDescription ? '\n\n' + currentDescription : '');
-
-            updates.description = newDescription;
-            console.log('📱 [v2.5.62] WhatsApp + chiamata da aggiungere in cima:', whatsappLink, phoneLink);
+            if (whatsappNeedsUpdate) {
+                // 🆕 v2.5.62: WhatsApp + chiamata in CIMA. 🆕 v2.5.64: + riga scheda lead (se ho il codice).
+                const block = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
+                    (schedaLine ? '\n' + schedaLine : '');
+                updates.description = block + (currentDescription ? '\n\n' + currentDescription : '');
+                console.log('📱 [v2.5.64] WhatsApp + chiamata' + (schedaLine ? ' + scheda lead' : '') + ' in cima');
+            } else {
+                // wa.me già presente, manca solo la scheda: aggiungo SOLO quella riga in cima (idempotente).
+                updates.description = schedaLine + '\n' + currentDescription;
+                console.log('📂 [v2.5.64] Aggiunta riga scheda lead a evento esistente:', appLink);
+            }
         }
-        
+
         // Aggiorna evento
         if (Object.keys(updates).length > 0) {
             await window.gapi.client.calendar.events.patch({

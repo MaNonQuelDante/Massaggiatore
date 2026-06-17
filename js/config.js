@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.63',
-    fullName: 'v2.5.63 by Dante',
+    version: '2.5.64',
+    fullName: 'v2.5.64 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-17 - Sezione Lead, fix date funnel. L\'"📥 Ingresso lead" nel log ora usa lo STAMP DI CREAZIONE dell\'evento "LEAD - Call" (createdAt = quando Google Calendar ha rilevato il nuovo evento = ingresso reale del lead), NON più l\'orario dell\'appuntamento. Il giorno+ora dell\'APPUNTAMENTO (t0) è stato spostato accanto al nome nell\'header della card ("Nome Cognome · 📅 gg/mm hh:mm"). buildLeadCallIndex ora propaga event.created; findLeadT0Auto/bestLeadSuggestion/resolveLeadT0 restituiscono anche createdAt (retrocompatibili: t0 e suggestion invariati). Fallback ingresso al primo messaggio se il created manca.'
+    lastUpdate: '2026-06-17 - Deep-link scheda lead da Google Calendar (auth-aware, mobile/desktop). Ogni lead riceve un codice ID alfanumerico stabile (L0001…) assegnato alla nascita (markLeadAsContacted) o in backfill al primo caricamento della sezione Lead, salvato in cloud (LEAD_CODES + LEAD_CODE_COUNTER su appDataFolder). Ogni card mostra il codice come badge ed è raggiungibile via URL ?id=Lxxxx. Negli eventi Calendar, accanto a 📱 WhatsApp / 📞 Chiama, viene iniettata la riga "📂 Scheda lead: …?id=Lxxxx" (idempotente: anche eventi vecchi con wa.me ma senza ?id= la ricevono al passaggio). Aprendo il link da qualsiasi device si atterra sempre sulla scheda, anche dopo login (evento auth-ready). Chiave identità lead centralizzata in leadIdentityKey, condivisa tra sezione Lead e Calendar.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

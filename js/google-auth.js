@@ -432,6 +432,10 @@ async function handleAuthResponse(resp) {
     // dal fatto che lo faccia GIS in automatico).
     setGapiToken(accessToken);
 
+    // v2.5.64: segnala "auth pronta" (token valido + agganciato a gapi) per il deep-link scheda lead.
+    window.isAuthReady = true;
+    window.dispatchEvent(new CustomEvent('auth-ready'));
+
     // ===== PERSISTENZA TOKEN (localStorage) =====
     const expiresIn = resp.expires_in || 3600; // secondi (default 1 ora)
     const expiresAt = Date.now() + (expiresIn * 1000);
@@ -614,6 +618,10 @@ function useRestoredToken(token, expiresAt) {
     // v2.5.51: QUI stava il bug — senza questo, gapi.client non aveva il token
     // ripristinato e people/me tornava 401 → login forzato a ogni reload.
     setGapiToken(token);
+
+    // v2.5.64: segnala "auth pronta" anche al ripristino sessione, per il deep-link scheda lead.
+    window.isAuthReady = true;
+    window.dispatchEvent(new CustomEvent('auth-ready'));
 
     // Setup timer (auto-refresh + keep-alive) sul tempo residuo
     const remainingSeconds = Math.floor((expiresAt - Date.now()) / 1000);
