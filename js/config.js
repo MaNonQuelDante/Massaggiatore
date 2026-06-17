@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.60',
-    fullName: 'v2.5.60 by Dante',
+    version: '2.5.61',
+    fullName: 'v2.5.61 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-17 - Aggiunto componente Reminder Lead (apps-script-reminder/): Google Apps Script SEPARATO dall\'app web (non caricato da index.html), gira su trigger ogni 5 min e manda reminder WhatsApp via Twilio quando un evento Calendar "LEAD - Call" supera le soglie T0+2h/+4h/+6h (Scrivere/Sollecitare/Sollecitare via chiamata). Dedup via PropertiesService, tolleranza 3h, setter solo da fonti esplicite o NOSETTER, credenziali solo in Script Properties. STATO: architettura pronta, Twilio ancora da creare (placeholder). Nessuna modifica alla web app: solo nuovo sorgente versionato nel progetto.'
+    lastUpdate: '2026-06-17 - Sezione Lead, 3 interventi collegati: (1) flag "Appuntamento confermato" per card lead che CONGELA il funnel (step scrivere/sollecitare/chiamata/noshow disabilitati ma visibili, orari barrati; ingresso resta attivo; tag verde; bottone Gruppo NoShow nascosto) — memo/conferma lettura/riscontro/riconferma NON toccati. (2) Barra in cima con contatore live confermati/non confermati + filtro Tutti/Non confermati/Confermati (in memoria, non persistito). (3) Le spunte del funnel popolano il log della card con timestamp CONGELATO alla prima spunta (riusato a ogni ri-spunto, mai Date.now()); "ingresso" usa T0 dell\'evento "LEAD - Call". Persistenza: leadChecklistState INVARIATO (zero migrazione), due nuovi file Drive affiancati testmess_lead_confirmed.json e testmess_lead_checklist_times.json.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

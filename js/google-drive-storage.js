@@ -20,7 +20,13 @@ const DRIVE_FILES = {
     // fallivano in silenzio (fileName undefined → "Key non valida") e le spunte del
     // funnel-conferma andavano perse al reload. File permanenti in appDataFolder.
     LEAD_CHECKLIST: 'testmess_lead_checklist.json', // stato checkbox funnel-conferma per lead
-    LEAD_BINDINGS: 'testmess_lead_bindings.json'    // agganci manuali lead↔evento "LEAD - Call"
+    LEAD_BINDINGS: 'testmess_lead_bindings.json',   // agganci manuali lead↔evento "LEAD - Call"
+    // v2.5.61: flag "Appuntamento confermato" (congela il funnel) e timestamp congelato della
+    // PRIMA spunta di ogni step funnel. File affiancati in appDataFolder: leadChecklistState NON
+    // cambia forma (zero migrazione). ATTENZIONE: il mapping DEVE esserci qui o save/load falliscono
+    // in silenzio ("Key non valida") e il dato va perso al reload (stesso bug fixato in v2.5.59).
+    LEAD_CONFIRMED: 'testmess_lead_confirmed.json',           // { "<leadKey>": true }
+    LEAD_CHECKLIST_TIMES: 'testmess_lead_checklist_times.json' // { "<leadKey>": { "<step>": ISO } }
 };
 
 let driveInited = false;

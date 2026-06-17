@@ -1075,6 +1075,100 @@ body {
 }
 .lead-link-muted:hover { color: var(--gray-700); }
 
+/* ===== LEAD: flag conferma + filtro/contatore + log azioni funnel (v2.5.61) ===== */
+
+/* Checkbox "Appuntamento confermato" nell'header della card */
+.lead-confirm-toggle {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: #fff;
+    border: 1px solid var(--gray-200);
+    border-radius: 10px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--gray-700);
+}
+.lead-confirm-toggle input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: #16a34a;
+}
+.lead-confirm-toggle.is-confirmed {
+    background: #f0fdf4;
+    border-color: #86efac;
+    color: #166534;
+}
+
+/* Tag verde "Appuntamento confermato" (sostituisce il tag blu di stato) */
+.lead-checklist-tag.lead-tag-confirmed {
+    background: #dcfce7;
+    color: #166534;
+}
+
+/* Funnel congelato: step disabilitati ma VISIBILI (orari barrati) */
+.lead-check-row.lead-funnel-frozen {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.lead-check-row.lead-funnel-frozen input[type="checkbox"] {
+    cursor: not-allowed;
+}
+.lead-check-row.lead-funnel-frozen .lc-time {
+    text-decoration: line-through;
+    text-decoration-color: #9ca3af;
+}
+
+/* Barra contatore + filtro in cima alla sezione Lead */
+.lead-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.lead-filter-bar:empty { display: none; }   /* nascosta finché non popolata (no login / no lead) */
+.lead-filter-counts {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-700);
+}
+.lead-filter-sep { color: #9ca3af; }
+.lead-filter-btns { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.lead-filter-btn {
+    padding: 5px 12px;
+    border: 1px solid var(--gray-300);
+    border-radius: 999px;
+    background: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--gray-600);
+    cursor: pointer;
+}
+.lead-filter-btn:hover { background: var(--gray-50); }
+.lead-filter-btn.active {
+    background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+    border-color: transparent;
+    color: #fff;
+}
+
+/* Righe-azione del log generate dalle spunte del funnel (distinte dai messaggi del form) */
+.lead-azione-funnel { background: #faf5ff; }
+.lead-tipo-badge.lead-badge-funnel {
+    background: #ede9fe;
+    color: #6d28d9;
+}
+
 /* ===== IMPORTANTE ===== */
 .importante-card {
     background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
