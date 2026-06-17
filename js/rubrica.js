@@ -56,7 +56,7 @@ let isScanningContacts = false;
 
 // ===== INIZIALIZZAZIONE =====
 function initRubrica() {
-    console.log('📒 Rubrica module v2.5.58 initialized - Salvataggio automatico all\'invio + form "Aggiungi numero"');
+    console.log('📒 Rubrica module v2.5.65 initialized - Ricerca nome/numero (tendina) + cache auto-sync multi-device + write-back + verifica lead non in rubrica');
 
     // Inizializza date picker con valori default (no-op se il DOM è stato rimosso)
     initDateRangePicker();
@@ -92,7 +92,14 @@ function initRubrica() {
         addForm.addEventListener('submit', handleRubricaAddSubmit);
     }
 
-    // v2.5.58: verifica se un numero è già in rubrica
+    // v2.5.65: il campo "Altro" (società libera) si mostra solo se Tipo lead = ALTRO
+    const tipoSel = document.getElementById('rubricaAddTipo');
+    if (tipoSel) {
+        tipoSel.addEventListener('change', updateSocietaFieldVisibility);
+        updateSocietaFieldVisibility(); // stato iniziale
+    }
+
+    // v2.5.58: verifica se un numero è già in rubrica (retrocompat: se l'input esiste ancora)
     const verifyBtn = document.getElementById('rubricaVerifyBtn');
     if (verifyBtn) {
         verifyBtn.addEventListener('click', verifyNumberInRubrica);
@@ -103,12 +110,65 @@ function initRubrica() {
             if (e.key === 'Enter') { e.preventDefault(); verifyNumberInRubrica(); }
         });
     }
+
+    // v2.5.65: RICERCA unificata (nome O numero), tendina stile Google People
+    const searchInput = document.getElementById('rubricaSearchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => renderRubricaSearchResults(searchInput.value));
+        // chiudi la tendina cliccando fuori
+        document.addEventListener('click', (e) => {
+            const box = document.getElementById('rubricaSearchResults');
+            if (box && !box.contains(e.target) && e.target !== searchInput) {
+                box.style.display = 'none';
+            }
+        });
+        // click su un risultato → apri la scheda lead
+        const resultsBox = document.getElementById('rubricaSearchResults');
+        if (resultsBox) {
+            resultsBox.addEventListener('click', (e) => {
+                const item = e.target.closest('.rubrica-search-item');
+                if (!item) return;
+                openLeadFromRubrica({
+                    nome: item.dataset.nome || '',
+                    telefono: item.dataset.telefono || '',
+                    societa: item.dataset.societa || '',
+                    resourceName: item.dataset.resource || ''
+                });
+                resultsBox.style.display = 'none';
+            });
+        }
+    }
+
+    // v2.5.65: bottone "Verifica lead non in rubrica" (RICOLLEGATA la funzione persa)
+    const checkUnsavedBtn = document.getElementById('rubricaCheckUnsavedBtn');
+    if (checkUnsavedBtn) {
+        checkUnsavedBtn.addEventListener('click', renderUnsavedLeadsCheck);
+    }
+
+    // v2.5.65: handler delegati per i bottoni "Aggiorna"/"Ignora" della lista da-aggiornare
+    const unsavedBox = document.getElementById('rubricaUnsavedList');
+    if (unsavedBox) {
+        unsavedBox.addEventListener('click', handleUnsavedListClick);
+    }
+
+    // v2.5.65: auto-sync cache se vuota/vecchia (subito se loggato, altrimenti su auth-ready)
+    autoSyncRubricaIfStale();
+    window.addEventListener('auth-ready', autoSyncRubricaIfStale);
 }
+
+// ===== v2.5.65: MOSTRA/NASCONDI CAMPO "ALTRO" (società libera) =====
+function updateSocietaFieldVisibility() {
+    const tipo = (document.getElementById('rubricaAddTipo')?.value || '').toUpperCase();
+    const wrap = document.getElementById('rubricaAddSocietaWrap');
+    if (wrap) wrap.style.display = (tipo === 'ALTRO') ? 'block' : 'none';
+}
+window.updateSocietaFieldVisibility = updateSocietaFieldVisibility;
 
 // ===== v2.5.58: DERIVA "FE - Lead" / "SG - Lead" DAL TIPO LEAD =====
 // Accetta 'FE'/'SG' (dal selettore) oppure il valore servizio ('Finanza Efficace'/'Stock Gain').
 function societaFromTipoLead(tipo) {
     const t = (tipo || '').toString().toUpperCase();
+    if (t.includes('ALTRO')) return ''; // v2.5.65: "Altro" → società libera (la decide il chiamante)
     if (t.includes('FE') || t.includes('FINANZA')) return 'FE - Lead';
     if (t.includes('SG') || t.includes('STOCK')) return 'SG - Lead';
     return 'SG - Lead'; // fallback storico
@@ -119,8 +179,9 @@ window.societaFromTipoLead = societaFromTipoLead;
 async function handleRubricaAddSubmit(e) {
     if (e) e.preventDefault();
 
-    const nome = (document.getElementById('rubricaAddNome')?.value || '').trim();
-    const cognome = (document.getElementById('rubricaAddCognome')?.value || '').trim();
+    // v2.5.65: normalizzo nome/cognome a Title Case in scrittura (no MAIUSCOLO barbaro)
+    const nome = capitalizeNome((document.getElementById('rubricaAddNome')?.value || '').trim());
+    const cognome = capitalizeNome((document.getElementById('rubricaAddCognome')?.value || '').trim());
     const telefono = (document.getElementById('rubricaAddTelefono')?.value || '').trim();
     const tipo = document.getElementById('rubricaAddTipo')?.value || 'SG';
     const societaInput = (document.getElementById('rubricaAddSocieta')?.value || '').trim();
@@ -139,8 +200,17 @@ async function handleRubricaAddSubmit(e) {
         return;
     }
 
-    // Società: se compilata usa quella, altrimenti deriva dal selettore FE/SG
-    const societa = societaInput || societaFromTipoLead(tipo);
+    // v2.5.65: Società dalle opzioni FE/SG - Lead, oppure campo "Altro" libero.
+    let societa;
+    if ((tipo || '').toUpperCase() === 'ALTRO') {
+        if (!societaInput) {
+            showNotification('⚠️ Con "Altro" scrivi cosa mettere nel campo Società', 'error');
+            return;
+        }
+        societa = societaInput;
+    } else {
+        societa = societaFromTipoLead(tipo);
+    }
 
     const btn = document.getElementById('rubricaAddBtn');
     const originalHTML = btn ? btn.innerHTML : '';
@@ -648,9 +718,12 @@ async function getUnsavedContacts(forceRefresh = false) {
 }
 
 // ===== HELPER: CAPITALIZZA NOME =====
+// v2.5.65: delega all'helper Title Case UNIFICATO (google-calendar.js) così la
+// normalizzazione è identica ovunque (De Luca, D'Angelo, Anna-Maria, accentate).
 function capitalizeNome(text) {
     if (!text) return '';
-    // Capitalizza ogni parola (Mario Rossi, De Luca, etc)
+    if (window.toTitleCaseNome) return window.toTitleCaseNome(text);
+    // Fallback (se google-calendar.js non è caricato): comportamento storico
     return text.toLowerCase().split(' ').map(word => {
         if (word.length === 0) return word;
         return word.charAt(0).toUpperCase() + word.slice(1);
@@ -987,23 +1060,26 @@ async function unmarkContactAsSaved(phone) {
 }
 
 // ===== SINCRONIZZA CON GOOGLE CONTACTS (API CORRETTA) =====
-async function syncSavedContactsFromGoogle() {
+// v2.5.65: options.silent = true → niente notifiche/spinner UI (usato dall'auto-sync
+// in background al primo load su un dispositivo nuovo). Gli errori restano in console.
+async function syncSavedContactsFromGoogle(options = {}) {
+    const silent = !!options.silent;
     if (!window.accessToken) {
-        showNotification('Connetti Google per sincronizzare la rubrica', 'error');
+        if (!silent) showNotification('Connetti Google per sincronizzare la rubrica', 'error');
         return;
     }
-    
+
     // Disabilita pulsante durante sync
     const syncBtn = document.getElementById('syncRubricaBtn');
     if (syncBtn) {
         syncBtn.disabled = true;
         syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sincronizzazione...';
     }
-    
+
     try {
         checkTokenValidity();
-        showNotification('🔄 Sincronizzazione rubrica Google in corso...', 'info');
-        console.log('📇 Sincronizzazione rubrica Google...');
+        if (!silent) showNotification('🔄 Sincronizzazione rubrica Google in corso...', 'info');
+        console.log('📇 Sincronizzazione rubrica Google...' + (silent ? ' (auto, silenziosa)' : ''));
         
         // ✅ CORRETTO: Usa gapi.client.request con URL diretto
         // API: https://people.googleapis.com/v1/people/me/connections
@@ -1063,16 +1139,18 @@ async function syncSavedContactsFromGoogle() {
         localStorage.removeItem(STORAGE_KEYS_RUBRICA.SCAN_CACHE_TIMESTAMP);
         
         console.log(`💾 ${Object.keys(savedContacts).length} contatti sincronizzati`);
-        showNotification(`✅ Rubrica sincronizzata: ${Object.keys(savedContacts).length} contatti`, 'success');
-        
+        if (!silent) showNotification(`✅ Rubrica sincronizzata: ${Object.keys(savedContacts).length} contatti`, 'success');
+
         // Aggiorna UI
         await renderRubricaList();
-        
+
     } catch (error) {
         console.error('❌ Errore sync rubrica completo:', error);
-        
-        // Error handling specifico
-        if (error.message === 'TOKEN_EXPIRED') {
+
+        // In modalità silenziosa NON mostro popup/forzature logout: solo log.
+        if (silent) {
+            console.warn('⚠️ Auto-sync rubrica fallito (silenzioso):', error && error.status);
+        } else if (error.message === 'TOKEN_EXPIRED') {
             showNotification('⚠️ Sessione scaduta, rifare login Google', 'error');
             // Forza logout
             if (window.handleSignoutClick) {
@@ -1149,7 +1227,7 @@ async function saveContactToGoogle(contactData) {
         });
         
         console.log('✅ Contatto salvato in Google:', response);
-        
+
         // Marca come salvato nel cache locale (DOPO conferma Google)
         const normalized = normalizePhone(contactData.telefono);
         const savedContactsJSON = localStorage.getItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS);
@@ -1161,12 +1239,19 @@ async function saveContactToGoogle(contactData) {
                 console.error('❌ Errore parsing saved contacts:', e);
             }
         }
-        
+
+        // v2.5.65: SALVA anche nome/società/resourceName (prima si perdevano e la
+        // ricerca per nome non trovava il contatto finché non rifacevi un sync completo).
+        // Stessa forma usata da syncSavedContactsFromGoogle, così la cache resta omogenea.
+        const nomeCompleto = `${contactData.nome || ''} ${contactData.cognome || ''}`.trim();
         savedContacts[normalized] = {
             savedAt: new Date().toISOString(),
-            fromGoogle: true
+            fromGoogle: true,
+            nome: nomeCompleto,
+            societa: contactData.societa || '',
+            resourceName: (response && response.result && response.result.resourceName) || ''
         };
-        
+
         localStorage.setItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS, JSON.stringify(savedContacts));
         
         // Invalida cache scan
@@ -1355,6 +1440,369 @@ async function renderRubricaList() {
         </div>
     `;
 }
+
+// ===== v2.5.65: AUTO-SYNC CACHE SE VUOTA O VECCHIA (multi-dispositivo) =====
+// La cache contatti vive in localStorage: da un dispositivo NUOVO è vuota finché non
+// premi "Sincronizza Ora" → la ricerca non trovava niente. Qui la popoliamo da sola in
+// background appena c'è il token (al load e all'evento auth-ready), se è vuota o più
+// vecchia di FRESHNESS. Niente lag in uso normale: parte una sola volta e in silenzio.
+const RUBRICA_CACHE_FRESHNESS_MS = 60 * 60 * 1000; // 1 ora
+let autoSyncRubricaInFlight = false;
+
+async function autoSyncRubricaIfStale() {
+    if (!window.accessToken) return; // niente token: si ritenta su auth-ready
+    if (autoSyncRubricaInFlight) return;
+
+    const savedJSON = localStorage.getItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS);
+    let count = 0;
+    try { count = savedJSON ? Object.keys(JSON.parse(savedJSON)).length : 0; } catch (e) { count = 0; }
+
+    const lastSync = parseInt(
+        new Date(localStorage.getItem(STORAGE_KEYS_RUBRICA.LAST_RUBRICA_SYNC) || 0).getTime()
+    ) || 0;
+    const stale = (Date.now() - lastSync) > RUBRICA_CACHE_FRESHNESS_MS;
+
+    if (count > 0 && !stale) {
+        console.log('📇 [v2.5.65] Cache rubrica fresca, niente auto-sync');
+        return;
+    }
+
+    autoSyncRubricaInFlight = true;
+    console.log(`📇 [v2.5.65] Auto-sync rubrica (cache ${count === 0 ? 'vuota' : 'vecchia'})...`);
+    try {
+        await syncSavedContactsFromGoogle({ silent: true });
+    } finally {
+        autoSyncRubricaInFlight = false;
+    }
+}
+window.autoSyncRubricaIfStale = autoSyncRubricaIfStale;
+
+// ===== v2.5.65: RICERCA CONTATTI (stile Google People: per NOME o per NUMERO) =====
+// Stessa logica usata dalla tendina e dalla verifica: match su displayName (substring,
+// case/accent-insensitive) OPPURE su numero (normalizeForComparison). Legge dalla cache
+// SAVED_CONTACTS (popolata dall'auto-sync), quindi è istantanea e offline.
+function stripAccents(s) {
+    return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+function searchRubricaContacts(query, limit = 12) {
+    const q = stripAccents((query || '').trim().toLowerCase());
+    if (!q) return [];
+
+    const savedJSON = localStorage.getItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS);
+    if (!savedJSON) return [];
+    let saved = {};
+    try { saved = JSON.parse(savedJSON); } catch (e) { return []; }
+
+    const qDigits = q.replace(/\D/g, '');
+    const results = [];
+    for (const phone of Object.keys(saved)) {
+        const c = saved[phone] || {};
+        const nome = c.nome || '';
+        const nameMatch = stripAccents(nome.toLowerCase()).includes(q);
+        const phoneMatch = qDigits.length >= 3 &&
+            (normalizeForComparison(phone) || '').includes(qDigits);
+        if (nameMatch || phoneMatch) {
+            results.push({
+                nome: nome || '(senza nome)',
+                telefono: phone,
+                societa: c.societa || '',
+                resourceName: c.resourceName || ''
+            });
+        }
+    }
+    // Ordina: prima chi inizia col testo cercato, poi alfabetico
+    results.sort((a, b) => {
+        const an = stripAccents(a.nome.toLowerCase());
+        const bn = stripAccents(b.nome.toLowerCase());
+        const aStarts = an.startsWith(q) ? 0 : 1;
+        const bStarts = bn.startsWith(q) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+        return an.localeCompare(bn);
+    });
+    return results.slice(0, limit);
+}
+window.searchRubricaContacts = searchRubricaContacts;
+
+// ===== v2.5.65: APRI SCHEDA LEAD DA UN RISULTATO RUBRICA =====
+// Riusa la logica di deep-link esistente (sezione Lead + focusLeadCard). La card lead ha
+// id="lead-card-<leadIdentityKey>" e data-lead-code. Provo prima per telefono (chiave
+// identità lead), poi per codice. Se il lead non è nella lista (es. solo in rubrica, mai
+// contattato) mostro un toast onesto invece di un link rotto.
+async function openLeadFromRubrica(contact) {
+    if (!contact) return;
+    try {
+        if (window.showPage) await window.showPage('lead');
+        document.querySelectorAll('.sidebar-link').forEach(l =>
+            l.classList.toggle('active', l.dataset.page === 'lead'));
+
+        // 1) prova per telefono via leadIdentityKey (stessa usata dalle card)
+        let card = null;
+        if (window.leadIdentityKey && contact.telefono) {
+            const key = window.leadIdentityKey(contact.telefono, contact.nome, '');
+            const id = 'lead-card-' + encodeURIComponent(key);
+            try {
+                const sel = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+                card = document.getElementById(id) || document.querySelector('#' + sel);
+            } catch (e) { card = document.getElementById(id); }
+        }
+
+        if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card.classList.add('lead-card-highlight');
+            setTimeout(() => card.classList.remove('lead-card-highlight'), 2500);
+        } else if (window.showLeadToast) {
+            window.showLeadToast((contact.nome || 'Contatto') + ': in rubrica ma non tra i lead contattati');
+        }
+    } catch (e) {
+        console.warn('⚠️ [v2.5.65] openLeadFromRubrica fallito:', e);
+    }
+}
+window.openLeadFromRubrica = openLeadFromRubrica;
+
+// ===== v2.5.65: AGGIORNA UN CONTATTO ESISTENTE SU GOOGLE PEOPLE (write-back) =====
+// Se modifichi un lead già in rubrica, la modifica deve finire su Google People, non
+// restare solo locale (sparirebbe al sync successivo). Usa people.updateContact: serve
+// l'etag fresco → prima un GET del contatto, poi PATCH con updatePersonFields.
+async function updateContactInGoogle(resourceName, data) {
+    if (!window.accessToken) {
+        showNotification('Connetti Google per aggiornare il contatto', 'error');
+        return false;
+    }
+    if (!resourceName) {
+        console.warn('⚠️ updateContactInGoogle: resourceName mancante');
+        return false;
+    }
+    try {
+        checkTokenValidity();
+
+        // 1) GET per ottenere etag aggiornato (obbligatorio per updateContact)
+        const getResp = await retryWithBackoff(async () => {
+            return await gapi.client.request({
+                'path': `https://people.googleapis.com/v1/${resourceName}`,
+                'method': 'GET',
+                'params': { 'personFields': 'names,organizations,phoneNumbers' }
+            });
+        });
+        const etag = getResp.result.etag;
+
+        // 2) Costruisci il body e la lista dei campi da aggiornare
+        const body = { etag };
+        const fields = [];
+        if (data.nome !== undefined || data.cognome !== undefined) {
+            body.names = [{
+                givenName: capitalizeNome(data.nome || ''),
+                familyName: capitalizeNome(data.cognome || '')
+            }];
+            fields.push('names');
+        }
+        if (data.societa !== undefined) {
+            body.organizations = [{ name: data.societa || '' }];
+            fields.push('organizations');
+        }
+        if (fields.length === 0) return false;
+
+        // 3) PATCH updateContact
+        await retryWithBackoff(async () => {
+            return await gapi.client.request({
+                'path': `https://people.googleapis.com/v1/${resourceName}:updateContact`,
+                'method': 'PATCH',
+                'params': { 'updatePersonFields': fields.join(',') },
+                'body': body
+            });
+        });
+
+        // 4) Aggiorna anche la cache locale (resta coerente fino al prossimo sync)
+        const savedJSON = localStorage.getItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS);
+        if (savedJSON) {
+            try {
+                const saved = JSON.parse(savedJSON);
+                for (const phone of Object.keys(saved)) {
+                    if (saved[phone] && saved[phone].resourceName === resourceName) {
+                        if (body.names) saved[phone].nome = `${body.names[0].givenName} ${body.names[0].familyName}`.trim();
+                        if (body.organizations) saved[phone].societa = body.organizations[0].name;
+                    }
+                }
+                localStorage.setItem(STORAGE_KEYS_RUBRICA.SAVED_CONTACTS, JSON.stringify(saved));
+            } catch (e) { /* cache best-effort */ }
+        }
+
+        console.log('✅ [v2.5.65] Contatto aggiornato su Google People:', resourceName, fields);
+        showNotification('✅ Contatto aggiornato in rubrica Google', 'success');
+        return true;
+    } catch (error) {
+        console.error('❌ [v2.5.65] Errore updateContact:', error);
+        if (error.status === 403) {
+            showNotification('❌ Abilita People API su Google Cloud Console', 'error');
+        } else if (error.status === 401) {
+            showNotification('❌ Token scaduto - Rifare login', 'error');
+        } else {
+            showNotification('❌ Errore aggiornamento contatto', 'error');
+        }
+        return false;
+    }
+}
+window.updateContactInGoogle = updateContactInGoogle;
+
+// ===== v2.5.65: HELPER ESCAPE HTML (anti-injection nei render) =====
+function escapeHtmlRubrica(s) {
+    return (s || '').toString()
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ===== v2.5.65: RENDER TENDINA RICERCA (nome o numero) =====
+function renderRubricaSearchResults(query) {
+    const box = document.getElementById('rubricaSearchResults');
+    if (!box) return;
+
+    const q = (query || '').trim();
+    if (!q) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+    const results = searchRubricaContacts(q);
+    if (results.length === 0) {
+        const isNumber = !!normalizeForComparison(q);
+        box.innerHTML = `<div class="rubrica-search-empty" style="padding: 10px 12px; color: var(--gray-600);">
+            <i class="fas fa-info-circle"></i> Nessun contatto trovato${isNumber ? ' — non in rubrica. Usa il form sopra per aggiungerlo.' : ''}
+        </div>`;
+        box.style.display = 'block';
+        return;
+    }
+
+    box.innerHTML = results.map(c => {
+        const soc = c.societa ? ` · ${escapeHtmlRubrica(c.societa)}` : '';
+        return `<div class="rubrica-search-item"
+                    data-nome="${escapeHtmlRubrica(c.nome)}"
+                    data-telefono="${escapeHtmlRubrica(c.telefono)}"
+                    data-societa="${escapeHtmlRubrica(c.societa)}"
+                    data-resource="${escapeHtmlRubrica(c.resourceName)}"
+                    style="padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--gray-200); display: flex; flex-direction: column; gap: 2px;">
+                <span style="font-weight: 600; color: var(--gray-800);">
+                    <i class="fas fa-user" style="color: var(--primary-color);"></i> ${escapeHtmlRubrica(c.nome)}
+                </span>
+                <span style="font-size: 0.88em; color: var(--gray-600);">
+                    <i class="fas fa-phone"></i> ${escapeHtmlRubrica(c.telefono)}${soc}
+                    <span style="margin-left: 6px; color: var(--primary-color);"><i class="fas fa-arrow-right"></i> apri scheda</span>
+                </span>
+            </div>`;
+    }).join('');
+    box.style.display = 'block';
+}
+window.renderRubricaSearchResults = renderRubricaSearchResults;
+
+// ===== v2.5.65: RICOLLEGATA — VERIFICA QUALI LEAD DEGLI EVENTI NON SONO IN RUBRICA =====
+// Era la "funzione persa": getUnsavedContacts esisteva ancora ma nessun bottone la
+// richiamava. Qui la ricolleghiamo: scansiona eventi/cronologia e mostra i lead i cui
+// numeri NON sono in rubrica (così sai se si sono salvati tutti) + quelli con società da
+// correggere. La logica sotto è la stessa di prima, solo riagganciata alla UI.
+async function renderUnsavedLeadsCheck() {
+    const container = document.getElementById('rubricaUnsavedList');
+    if (!container) return;
+
+    if (!window.accessToken) {
+        container.innerHTML = '<p style="color: var(--gray-600);">Connetti Google per verificare.</p>';
+        return;
+    }
+
+    const btn = document.getElementById('rubricaCheckUnsavedBtn');
+    const originalHTML = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifica in corso...'; }
+    container.innerHTML = '<p style="color: var(--gray-600);"><i class="fas fa-spinner fa-spin"></i> Scansione eventi e rubrica…</p>';
+
+    try {
+        const { unsaved = [], toUpdate = [] } = await getUnsavedContacts(true) || {};
+
+        let html = `<div style="margin-bottom: 12px; padding: 10px 12px; background: var(--gray-100); border-radius: 8px;">
+            <strong>${unsaved.length}</strong> lead negli eventi <strong>non sono in rubrica</strong>${toUpdate.length ? ` · <strong>${toUpdate.length}</strong> da aggiornare` : ''}.
+        </div>`;
+
+        if (unsaved.length === 0 && toUpdate.length === 0) {
+            html += '<p style="color: var(--success-color);"><i class="fas fa-check-circle"></i> Tutti i lead degli eventi sono già in rubrica. 🎉</p>';
+        }
+
+        // Lead da SALVARE (non presenti in rubrica)
+        unsaved.forEach(c => {
+            const nomeCompleto = `${escapeHtmlRubrica(c.nome)} ${escapeHtmlRubrica(c.cognome || '')}`.trim();
+            const soc = c.societa ? ` · ${escapeHtmlRubrica(c.societa)}` : '';
+            html += `<div class="rubrica-item" style="padding: 12px; border: 2px solid var(--warning-color); border-radius: 8px; margin-bottom: 10px; background: white; display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                <div>
+                    <div style="font-weight: 600; color: var(--gray-800);"><i class="fas fa-user"></i> ${nomeCompleto || '(senza nome)'}</div>
+                    <div style="font-size: 0.9em; color: var(--gray-600);"><i class="fas fa-phone"></i> ${escapeHtmlRubrica(c.telefono)}${soc}</div>
+                </div>
+                <button type="button" class="btn btn-sm btn-success save-unsaved-btn"
+                    data-nome="${escapeHtmlRubrica(c.nome)}" data-cognome="${escapeHtmlRubrica(c.cognome || '')}"
+                    data-telefono="${escapeHtmlRubrica(c.telefono)}" data-societa="${escapeHtmlRubrica(c.societa || '')}"
+                    style="white-space: nowrap;"><i class="fas fa-save"></i> Salva</button>
+            </div>`;
+        });
+
+        // Contatti già in rubrica ma con società da correggere (riusa renderContactToUpdate)
+        toUpdate.forEach(c => { html += renderContactToUpdate(c); });
+
+        container.innerHTML = html;
+    } catch (e) {
+        console.error('❌ [v2.5.65] Verifica lead non in rubrica fallita:', e);
+        container.innerHTML = '<p style="color: var(--error-color);">Errore durante la verifica. Riprova.</p>';
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = originalHTML; }
+    }
+}
+window.renderUnsavedLeadsCheck = renderUnsavedLeadsCheck;
+
+// ===== v2.5.65: HANDLER DELEGATI per la lista "verifica lead non in rubrica" =====
+async function handleUnsavedListClick(e) {
+    const saveBtn = e.target.closest('.save-unsaved-btn');
+    const updateBtn = e.target.closest('.update-contact-btn');
+    const ignoreBtn = e.target.closest('.ignore-update-btn');
+
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        const ok = await saveContactToGoogle({
+            nome: saveBtn.dataset.nome || '',
+            cognome: saveBtn.dataset.cognome || '',
+            telefono: saveBtn.dataset.telefono || '',
+            societa: saveBtn.dataset.societa || ''
+        });
+        if (ok) {
+            const card = saveBtn.closest('.rubrica-item');
+            if (card) card.remove();
+        } else {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="fas fa-save"></i> Salva';
+        }
+        return;
+    }
+
+    if (updateBtn) {
+        const resource = updateBtn.dataset.resource || '';
+        if (!resource) {
+            showNotification('⚠️ resourceName mancante: rifai "Sincronizza Ora" e riprova', 'error');
+            return;
+        }
+        updateBtn.disabled = true;
+        updateBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+        const ok = await updateContactInGoogle(resource, {
+            nome: updateBtn.dataset.nome || '',
+            cognome: updateBtn.dataset.cognome || '',
+            societa: updateBtn.dataset.societa || ''
+        });
+        if (ok) {
+            const card = updateBtn.closest('.rubrica-item');
+            if (card) card.remove();
+        } else {
+            updateBtn.disabled = false;
+            updateBtn.innerHTML = '<i class="fas fa-sync"></i> Aggiorna';
+        }
+        return;
+    }
+
+    if (ignoreBtn) {
+        const card = ignoreBtn.closest('.rubrica-item');
+        if (card) card.remove();
+    }
+}
+window.handleUnsavedListClick = handleUnsavedListClick;
 
 // ===== ESPORTA FUNZIONI GLOBALI =====
 window.initRubrica = initRubrica;

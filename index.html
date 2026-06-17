@@ -9,7 +9,7 @@
     <!-- PRIVACY: blocco indicizzazione motori di ricerca (sito accessibile solo via link) -->
     <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
     <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
-    <title>Stock Gain Messenger - v2.5.64 by Dante</title>
+    <title>Stock Gain Messenger - v2.5.65 by Dante</title>
 
     <!-- Favicon e icone app (logo: mani in massaggio + sorriso, teal #128C7E) -->
     <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
@@ -77,7 +77,7 @@
                 <!-- Titolo e Nome Operatore -->
                 <div class="header-text">
                     <h1 class="header-title">Stock Gain Messenger</h1>
-                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.64 by Dante">v2.5.64 by Dante</p>
+                    <p class="header-subtitle" id="operatoreName" data-version="v2.5.65 by Dante">v2.5.65 by Dante</p>
                 </div>
                 
                 <!-- WhatsApp Icon -->
@@ -564,18 +564,20 @@
                             <label for="rubricaAddTelefono" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">Numero</label>
                             <input type="tel" id="rubricaAddTelefono" class="form-control" placeholder="+39 333 1234567" required>
                         </div>
-                        <div style="flex: 0 0 auto; min-width: 140px;">
-                            <label for="rubricaAddTipo" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">Tipo lead</label>
+                        <div style="flex: 0 0 auto; min-width: 160px;">
+                            <label for="rubricaAddTipo" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">Tipo lead (campo "Società")</label>
                             <select id="rubricaAddTipo" class="form-control">
-                                <option value="FE">FE (Finanza Efficace)</option>
-                                <option value="SG">SG (Stock Gain)</option>
+                                <option value="FE">FE - Lead</option>
+                                <option value="SG">SG - Lead</option>
+                                <option value="ALTRO">Altro…</option>
                             </select>
                         </div>
-                        <div style="flex: 1; min-width: 160px;">
+                        <!-- v2.5.65: campo libero, visibile solo se Tipo lead = "Altro…" -->
+                        <div id="rubricaAddSocietaWrap" style="flex: 1; min-width: 160px; display: none;">
                             <label for="rubricaAddSocieta" style="display: block; margin-bottom: 6px; font-weight: 500; color: var(--gray-700);">
-                                Società <span style="font-weight: 400; color: var(--gray-500); font-size: 0.85em;">(vuoto = dal tipo lead)</span>
+                                Società <span style="font-weight: 400; color: var(--gray-500); font-size: 0.85em;">(scrivi quello che vuoi)</span>
                             </label>
-                            <input type="text" id="rubricaAddSocieta" class="form-control" placeholder="Es. FE - Lead">
+                            <input type="text" id="rubricaAddSocieta" class="form-control" placeholder="Es. Cliente, Partner, Fornitore…">
                         </div>
                     </div>
                     <button type="submit" id="rubricaAddBtn" class="btn btn-primary" style="margin-top: 16px;">
@@ -583,20 +585,29 @@
                     </button>
                 </form>
 
-                <!-- v2.5.58: Verifica numero in rubrica -->
+                <!-- v2.5.65: Ricerca unificata in rubrica — per NOME o per NUMERO (tendina stile Google People) -->
                 <div style="margin-bottom: 24px; padding: 16px; background: var(--gray-100); border-radius: 8px;">
                     <div style="font-weight: 600; color: var(--gray-800); margin-bottom: 12px;">
-                        <i class="fas fa-search"></i> Verifica se un numero è in rubrica
+                        <i class="fas fa-search"></i> Cerca in rubrica <span style="font-weight: 400; color: var(--gray-500); font-size: 0.85em;">(nome o numero — clicca un risultato per aprire la scheda lead)</span>
                     </div>
-                    <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;">
-                        <div style="flex: 1; min-width: 200px;">
-                            <input type="tel" id="rubricaVerifyInput" class="form-control" placeholder="+39 333 1234567">
-                        </div>
-                        <button type="button" id="rubricaVerifyBtn" class="btn btn-secondary">
-                            <i class="fas fa-search"></i> Verifica
-                        </button>
+                    <div style="position: relative;">
+                        <input type="text" id="rubricaSearchInput" class="form-control" placeholder="Es. Nicola  oppure  +39 333 1234567" autocomplete="off">
+                        <div id="rubricaSearchResults" style="display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 50; background: white; border: 1px solid var(--gray-300); border-radius: 0 0 8px 8px; max-height: 320px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,0.12);"></div>
                     </div>
-                    <div id="rubricaVerifyResult" style="margin-top: 12px; font-size: 0.95em;"></div>
+                </div>
+
+                <!-- v2.5.65: RICOLLEGATA — verifica quali lead degli eventi NON sono ancora in rubrica -->
+                <div style="margin-bottom: 24px; padding: 16px; background: var(--gray-100); border-radius: 8px;">
+                    <div style="font-weight: 600; color: var(--gray-800); margin-bottom: 6px;">
+                        <i class="fas fa-clipboard-check"></i> Lead non ancora in rubrica
+                    </div>
+                    <p style="margin: 0 0 12px; font-size: 0.9em; color: var(--gray-600);">
+                        Scansiona eventi e cronologia e mostra i lead i cui numeri <strong>non sono in rubrica</strong> (così sai se si sono salvati tutti).
+                    </p>
+                    <button type="button" class="btn btn-secondary" id="rubricaCheckUnsavedBtn">
+                        <i class="fas fa-clipboard-check"></i> Verifica lead non in rubrica
+                    </button>
+                    <div id="rubricaUnsavedList" style="margin-top: 16px;"></div>
                 </div>
 
                 <button type="button" class="btn btn-primary" id="syncRubricaBtn" style="margin-bottom: 20px;">
@@ -707,15 +718,15 @@
 
     <!-- Scripts -->
     <script src="js/nomi-italiani.js?v=2.5.29"></script>
-    <script src="js/config.js?v=2.5.64"></script>
+    <script src="js/config.js?v=2.5.65"></script>
     <script src="js/google-auth.js?v=2.5.64"></script>
     <script src="js/google-drive-storage.js?v=2.5.64"></script>
     <script src="js/google-sheets-assistenti.js?v=2.5.29"></script>
-    <script src="js/google-calendar.js?v=2.5.64"></script>
+    <script src="js/google-calendar.js?v=2.5.65"></script>
     <script src="js/templates.js?v=2.5.29"></script>
-    <script src="js/rubrica.js?v=2.5.58"></script>
+    <script src="js/rubrica.js?v=2.5.65"></script>
     <script src="js/github-auto-push.js?v=2.5.29"></script>
-    <script src="js/main.js?v=2.5.64"></script>
+    <script src="js/main.js?v=2.5.65"></script>
     
     <!-- Google API Initialization -->
     <script>

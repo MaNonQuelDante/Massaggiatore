@@ -979,12 +979,9 @@ function extractNameFromEvent(event) {
     name = name.replace(/\s+/g, ' ').trim();
     
     // CAPITALIZZAZIONE: "MARIO ROSSI" o "mario rossi" → "Mario Rossi"
-    name = name
-        .toLowerCase()
-        .split(' ')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ');
-    
+    // v2.5.65: usa l'helper unico (gestisce De Luca, D'Angelo, Anna-Maria, accentate)
+    name = (window.toTitleCaseNome ? window.toTitleCaseNome(name) : name);
+
     return name || 'Senza nome';
 }
 
@@ -1193,6 +1190,24 @@ function setMeetModeToggle(mode) {
     if (window.updatePreview) window.updatePreview();
 }
 window.setMeetModeToggle = setMeetModeToggle;
+
+// ===== v2.5.65: TITLE CASE UNIFICATO PER I NOMI =====
+// "DANTE DAVIDE CIAVARELLA" / "dante davide ciavarella" → "Dante Davide Ciavarella".
+// Gestisce particelle attaccate da spazio (De Luca), apostrofo (D'Angelo) e trattino
+// (Anna-Maria), incluse le accentate minuscole. Helper UNICO usato ovunque si componga
+// o salvi un nome (rinomina eventi Calendar, estrazione contatti, rubrica): scriviamo
+// come persone normali, non in MAIUSCOLO da barbari.
+function toTitleCaseNome(text) {
+    if (!text) return '';
+    return text
+        .toString()
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+        // prima lettera di ogni "parola": a inizio stringa o dopo spazio / apostrofo / trattino
+        .replace(/(^|[\s'’\-])([a-zà-ÿ])/g, (m, sep, ch) => sep + ch.toUpperCase());
+}
+window.toTitleCaseNome = toTitleCaseNome;
 
 // ===== PARSING INTELLIGENTE NOME/COGNOME =====
 function parseNameSurname(fullName) {
@@ -1448,7 +1463,8 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         const needsLeadLink = !!appLink && !currentDescription.includes('?id=');
 
         // 3. 🆕 v2.5.27: Calcola nuovo titolo evento (solo Nome Cognome)
-        const newTitle = cognome ? `${nome} ${cognome}`.trim() : nome;
+        // v2.5.65: Title Case in SCRITTURA (no MAIUSCOLO) → "Dante Davide Ciavarella"
+        const newTitle = toTitleCaseNome(cognome ? `${nome} ${cognome}` : nome);
         const currentTitle = event.result.summary || '';
         const needsTitleUpdate = currentTitle !== newTitle;
 
@@ -1527,7 +1543,8 @@ async function ensureEventTitleCorrect(event) {
         
         // Parsing nome/cognome (stesso algoritmo di fillFormFromEvent)
         const { firstName, lastName } = parseNameSurname(leadName);
-        const newTitle = lastName ? `${firstName} ${lastName}`.trim() : firstName;
+        // v2.5.65: Title Case in SCRITTURA (no MAIUSCOLO) → "Dante Davide Ciavarella"
+        const newTitle = toTitleCaseNome(lastName ? `${firstName} ${lastName}` : firstName);
         
         console.log('✏️ [v2.5.33] Parsing:', { original: event.summary, cleaned: leadName, newTitle });
         

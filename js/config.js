@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.64',
-    fullName: 'v2.5.64 by Dante',
+    version: '2.5.65',
+    fullName: 'v2.5.65 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-17 - Deep-link scheda lead da Google Calendar (auth-aware, mobile/desktop). Ogni lead riceve un codice ID alfanumerico stabile (L0001…) assegnato alla nascita (markLeadAsContacted) o in backfill al primo caricamento della sezione Lead, salvato in cloud (LEAD_CODES + LEAD_CODE_COUNTER su appDataFolder). Ogni card mostra il codice come badge ed è raggiungibile via URL ?id=Lxxxx. Negli eventi Calendar, accanto a 📱 WhatsApp / 📞 Chiama, viene iniettata la riga "📂 Scheda lead: …?id=Lxxxx" (idempotente: anche eventi vecchi con wa.me ma senza ?id= la ricevono al passaggio). Aprendo il link da qualsiasi device si atterra sempre sulla scheda, anche dopo login (evento auth-ready). Chiave identità lead centralizzata in leadIdentityKey, condivisa tra sezione Lead e Calendar.'
+    lastUpdate: '2026-06-17 - Rubrica: (1) RICERCA unificata stile Google People — cerchi per NOME o per NUMERO e una tendina mostra tutti i match (accent-insensitive, es. "nicol" → Nicola e Nicolò); clic su un risultato apre la scheda lead (riusa il deep-link sezione Lead). (2) Cache contatti SEMPRE fresca e multi-dispositivo: auto-sync silenzioso in background se la cache è vuota o vecchia >1h (al load e su auth-ready), così da un device nuovo trovi subito i numeri; saveContactToGoogle ora salva anche nome/società/resourceName (prima si perdevano). (3) Write-back: updateContactInGoogle aggiorna il contatto su Google People (people.updateContact con etag), non solo in locale. (4) Salvataggio: opzioni "FE - Lead" / "SG - Lead" + "Altro…" con campo libero. (5) Casing: helper Title Case UNICO (toTitleCaseNome) — niente più titoli evento in MAIUSCOLO, "DANTE DAVIDE CIAVARELLA" → "Dante Davide Ciavarella" (De Luca, D\'Angelo, Anna-Maria gestiti), in scrittura su Calendar. (6) RICOLLEGATA la verifica "lead non in rubrica" (getUnsavedContacts) con bottone dedicato + azioni Salva/Aggiorna/Ignora.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
