@@ -1369,7 +1369,13 @@ function buildLeadCallIndex() {
         const nameNorm = normalizeName(parsed.firstName + ' ' + parsed.lastName);
         const nameDisplay = (displayName && displayName !== 'Senza nome') ? displayName : (event.summary || 'Evento');
 
-        candidates.push({ id: event.id || '', phone9, nameNorm, nameDisplay, t0 });
+        // v2.5.63: created = STAMP DI CREAZIONE dell'evento (≈ quando Google Calendar ha
+        // rilevato il nuovo "LEAD - Call", cioè l'ingresso reale del lead). Persistito da
+        // v2.5.58. Diverso da t0 (orario appuntamento). Può mancare → null.
+        const created = event.created ? new Date(event.created) : null;
+        const createdValid = (created && !isNaN(created.getTime())) ? created : null;
+
+        candidates.push({ id: event.id || '', phone9, nameNorm, nameDisplay, t0, created: createdValid });
     });
 
     return { candidates };
@@ -1380,18 +1386,24 @@ function buildLeadCallIndex() {
 //   2) NOME normalizzato IDENTICO (ignora maiuscole/accenti/punteggiatura).
 //   3) NOME simile entro la soglia refusi, SOLO se non ambiguo (un solo nome ai minimi e
 //      nettamente più vicino del successivo) → evita di agganciare il lead sbagliato.
-// A parità di candidato vince il T0 più recente. Restituisce una Date o null.
+// A parità di candidato vince il T0 più recente. Restituisce { t0, created } del candidato
+// vincente, oppure null. (v2.5.63: prima tornava solo la Date t0; ora propaga anche il
+// created dell'evento agganciato, così il render può datare l'"ingresso" con lo stamp di
+// creazione invece dell'orario appuntamento.)
 function findLeadT0Auto(lead, candidates) {
     const cands = candidates || [];
     const phone9 = leadPhone9(lead.telefono);
     const leadName = normalizeName((lead.nome || '') + ' ' + (lead.cognome || ''));
-    const latest = (acc, t0) => (!acc || t0 > acc) ? t0 : acc;
+    // v2.5.63: tiene il CANDIDATO col T0 più recente (non più solo la Date), così resta
+    // disponibile il suo .created. Parità invariata: a T0 uguale vince il primo incontrato.
+    const latestCand = (acc, c) => (!acc || c.t0 > acc.t0) ? c : acc;
+    const pack = (c) => c ? { t0: c.t0, created: c.created || null } : null;
 
     // 1) Telefono
     if (phone9) {
         let best = null;
-        cands.forEach(c => { if (c.phone9 && c.phone9 === phone9) best = latest(best, c.t0); });
-        if (best) return best;
+        cands.forEach(c => { if (c.phone9 && c.phone9 === phone9) best = latestCand(best, c); });
+        if (best) return pack(best);
     }
 
     if (!leadName) return null;
@@ -1399,8 +1411,8 @@ function findLeadT0Auto(lead, candidates) {
     // 2) Nome identico (normalizzato)
     {
         let best = null;
-        cands.forEach(c => { if (c.nameNorm && c.nameNorm === leadName) best = latest(best, c.t0); });
-        if (best) return best;
+        cands.forEach(c => { if (c.nameNorm && c.nameNorm === leadName) best = latestCand(best, c); });
+        if (best) return pack(best);
     }
 
     // 3) Nome simile (refusi), solo se non ambiguo
@@ -1418,7 +1430,7 @@ function findLeadT0Auto(lead, candidates) {
             const margin = next ? next.d - minD : Infinity;
             // un solo nome ai minimi (stessa persona, eventuali più eventi) e gap ≥1 sul prossimo nome diverso
             if (distinctNames.size === 1 && margin >= 1) {
-                return atMin.reduce((acc, s) => latest(acc, s.c.t0), null);
+                return pack(atMin.reduce((acc, s) => latestCand(acc, s.c), null));
             }
         }
     }
@@ -1443,31 +1455,35 @@ function bestLeadSuggestion(lead, candidates, dismissed) {
         if (d < bestDist || (d === bestDist && best && c.t0 > best.t0)) { bestDist = d; best = c; }
     });
     if (!best) return null;
-    return { id: best.id, label: `${best.nameDisplay} · ${fmtLeadEventWhen(best.t0)}`, t0: best.t0 };
+    // v2.5.63: porto anche created (stamp creazione) per datare l'ingresso in caso 'suggest'.
+    return { id: best.id, label: `${best.nameDisplay} · ${fmtLeadEventWhen(best.t0)}`, t0: best.t0, created: best.created || null };
 }
 
 // Risolve il T0 di un lead tenendo conto degli agganci manuali e delle proposte.
-// Ritorna { status, t0, suggestion }:
+// Ritorna { status, t0, createdAt, suggestion }:
 //   'manual'  = orario impostato a mano    | 'bound' = agganciato a mano a un evento
 //   'auto'    = match automatico            | 'suggest' = proposta da confermare
 //   'none'    = nessun aggancio possibile
+//   t0        = orario APPUNTAMENTO (start evento / orario a mano) — invariato.
+//   createdAt = v2.5.63: STAMP DI CREAZIONE dell'evento agganciato (≈ ingresso lead). null
+//               per 'manual' (orario a mano non ha un evento) e 'none'.
 // NB: NON scrive mai (il render non tocca il cloud). Gli agganci "stale" sono solo ignorati.
 function resolveLeadT0(lead, candidates, binding) {
     binding = binding || {};
     if (binding.manualT0) {
         const d = new Date(binding.manualT0);
-        if (!isNaN(d.getTime())) return { status: 'manual', t0: d, suggestion: null };
+        if (!isNaN(d.getTime())) return { status: 'manual', t0: d, createdAt: null, suggestion: null };
     }
     if (binding.eventId) {
         const c = (candidates || []).find(x => x.id === binding.eventId);
-        if (c) return { status: 'bound', t0: c.t0, suggestion: null };
+        if (c) return { status: 'bound', t0: c.t0, createdAt: c.created || null, suggestion: null };
         // evento sparito da Calendar: ignoro l'aggancio e proseguo
     }
-    const autoT0 = findLeadT0Auto(lead, candidates);
-    if (autoT0) return { status: 'auto', t0: autoT0, suggestion: null };
+    const auto = findLeadT0Auto(lead, candidates);
+    if (auto) return { status: 'auto', t0: auto.t0, createdAt: auto.created || null, suggestion: null };
     const sugg = bestLeadSuggestion(lead, candidates, binding.dismissed);
-    if (sugg) return { status: 'suggest', t0: null, suggestion: sugg };
-    return { status: 'none', t0: null, suggestion: null };
+    if (sugg) return { status: 'suggest', t0: null, createdAt: sugg.created || null, suggestion: sugg };
+    return { status: 'none', t0: null, createdAt: null, suggestion: null };
 }
 
 // "gg/mm hh:mm" per mostrare quando cade un evento.
@@ -2018,9 +2034,11 @@ function renderLeadList() {
             if (recorded) {
                 ts = new Date(recorded); // firstCheckedAt congelato (mai cambia)
             } else if (step.key === 'ingresso') {
-                // "ingresso" è spuntato di default e non ha firstCheckedAt: uso T0 (orario evento
-                // "LEAD - Call"), fallback al primo messaggio del lead.
-                ts = resolution.t0 || (lead.messaggi[0] ? new Date(lead.messaggi[0].timestamp) : null);
+                // "ingresso" è spuntato di default e non ha firstCheckedAt. v2.5.63: uso lo STAMP
+                // DI CREAZIONE dell'evento "LEAD - Call" (createdAt = quando Calendar ha rilevato
+                // il nuovo evento = ingresso reale), NON l'orario appuntamento (t0). Fallback al
+                // primo messaggio del lead se il created non c'è.
+                ts = resolution.createdAt || (lead.messaggi[0] ? new Date(lead.messaggi[0].timestamp) : null);
             }
 
             let metaTime, sortTs;
@@ -2056,10 +2074,17 @@ function renderLeadList() {
 
         const checklistHtml = renderLeadChecklist(lead, resolution);
 
+        // v2.5.63: giorno+ora dell'APPUNTAMENTO accanto al nome (t0 = start evento "LEAD - Call"
+        // o orario a mano). Distinto dall'"ingresso" nel log, che usa lo stamp di creazione.
+        const apptWhen = resolution.t0 ? fmtLeadEventWhen(resolution.t0) : '';
+        const apptHtml = apptWhen
+            ? ` <span class="lead-appt-when" style="font-size: 12px; color: var(--gray-500); font-weight: normal;">· 📅 ${apptWhen}</span>`
+            : '';
+
         html += `
             <div class="cronologia-item">
                 <div class="cronologia-header">
-                    <strong>${nomeCompleto}</strong>
+                    <strong>${nomeCompleto}</strong>${apptHtml}
                     <span style="font-size: 13px; color: var(--gray-500);">
                         <i class="fas fa-phone"></i> ${telefono} · ${count} ${count === 1 ? 'azione' : 'azioni'}
                         ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}

@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.62',
-    fullName: 'v2.5.62 by Dante',
+    version: '2.5.63',
+    fullName: 'v2.5.63 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-17 - Evento Calendar: sotto la riga "📱 WhatsApp: <link>" in cima alla descrizione viene ora aggiunta, a capo, una riga "📞 Chiama: tel:+<numero>" per far partire una telefonata classica (non WhatsApp). Modifica applicata a entrambi i blocchi di js/google-calendar.js che costruiscono la descrizione. Per il check !includes("wa.me/") il link chiamata compare solo sugli eventi NUOVI (quelli che hanno già la riga WhatsApp non vengono ritoccati). Su mobile tel:+39... è cliccabile e avvia la chiamata.'
+    lastUpdate: '2026-06-17 - Sezione Lead, fix date funnel. L\'"📥 Ingresso lead" nel log ora usa lo STAMP DI CREAZIONE dell\'evento "LEAD - Call" (createdAt = quando Google Calendar ha rilevato il nuovo evento = ingresso reale del lead), NON più l\'orario dell\'appuntamento. Il giorno+ora dell\'APPUNTAMENTO (t0) è stato spostato accanto al nome nell\'header della card ("Nome Cognome · 📅 gg/mm hh:mm"). buildLeadCallIndex ora propaga event.created; findLeadT0Auto/bestLeadSuggestion/resolveLeadT0 restituiscono anche createdAt (retrocompatibili: t0 e suggestion invariati). Fallback ingresso al primo messaggio se il created manca.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
