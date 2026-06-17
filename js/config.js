@@ -5,11 +5,11 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.61',
-    fullName: 'v2.5.61 by Dante',
+    version: '2.5.62',
+    fullName: 'v2.5.62 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
-    lastUpdate: '2026-06-17 - Sezione Lead, 3 interventi collegati: (1) flag "Appuntamento confermato" per card lead che CONGELA il funnel (step scrivere/sollecitare/chiamata/noshow disabilitati ma visibili, orari barrati; ingresso resta attivo; tag verde; bottone Gruppo NoShow nascosto) — memo/conferma lettura/riscontro/riconferma NON toccati. (2) Barra in cima con contatore live confermati/non confermati + filtro Tutti/Non confermati/Confermati (in memoria, non persistito). (3) Le spunte del funnel popolano il log della card con timestamp CONGELATO alla prima spunta (riusato a ogni ri-spunto, mai Date.now()); "ingresso" usa T0 dell\'evento "LEAD - Call". Persistenza: leadChecklistState INVARIATO (zero migrazione), due nuovi file Drive affiancati testmess_lead_confirmed.json e testmess_lead_checklist_times.json.'
+    lastUpdate: '2026-06-17 - Evento Calendar: sotto la riga "📱 WhatsApp: <link>" in cima alla descrizione viene ora aggiunta, a capo, una riga "📞 Chiama: tel:+<numero>" per far partire una telefonata classica (non WhatsApp). Modifica applicata a entrambi i blocchi di js/google-calendar.js che costruiscono la descrizione. Per il check !includes("wa.me/") il link chiamata compare solo sugli eventi NUOVI (quelli che hanno già la riga WhatsApp non vengono ritoccati). Su mobile tel:+39... è cliccabile e avvia la chiamata.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====

@@ -1390,9 +1390,10 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
             phoneClean = '39' + phoneClean;
         }
         
-        // Genera link WhatsApp
+        // Genera link WhatsApp + link chiamata telefonica classica (tel:)
         const whatsappLink = `https://wa.me/${phoneClean}`;
-        
+        const phoneLink = `tel:+${phoneClean}`;
+
         // 1. Ottieni evento corrente
         // v2.5.42 FIX: usa il calendario reale dell'evento (era hardcoded 'primary',
         // quindi su calendari SG non-primary la get/patch falliva con 404 e il rename +
@@ -1418,10 +1419,10 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         
         if (needsWhatsAppLink) {
             // 🆕 v2.5.33: Aggiungi link WhatsApp IN CIMA alla descrizione
-            const newDescription = `📱 WhatsApp: ${whatsappLink}` +
+            const newDescription = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
                 (currentDescription ? '\n\n' + currentDescription : '');
             updates.description = newDescription;
-            console.log('📱 [v2.5.33] Aggiungo link WhatsApp in cima:', whatsappLink);
+            console.log('📱 [v2.5.62] Aggiungo link WhatsApp + chiamata in cima:', whatsappLink, phoneLink);
         }
         
         if (needsTitleUpdate) {
@@ -1528,18 +1529,19 @@ async function ensureEventTitleCorrect(event) {
             }
             
             const whatsappLink = `https://wa.me/${phoneClean}`;
+            const phoneLink = `tel:+${phoneClean}`;
             const currentEvent = await window.gapi.client.calendar.events.get({
                 calendarId: event.calendarId || 'primary',
                 eventId: event.id
             });
-            
+
             const currentDescription = currentEvent.result.description || '';
-            // 🆕 v2.5.33: WhatsApp link in CIMA alla descrizione
-            const newDescription = `📱 WhatsApp: ${whatsappLink}` +
+            // 🆕 v2.5.62: WhatsApp + link chiamata classica (tel:) in CIMA alla descrizione
+            const newDescription = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
                 (currentDescription ? '\n\n' + currentDescription : '');
-            
+
             updates.description = newDescription;
-            console.log('📱 [v2.5.33] WhatsApp link da aggiungere in cima:', whatsappLink);
+            console.log('📱 [v2.5.62] WhatsApp + chiamata da aggiungere in cima:', whatsappLink, phoneLink);
         }
         
         // Aggiorna evento
