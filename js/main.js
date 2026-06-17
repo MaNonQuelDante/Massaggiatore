@@ -1747,6 +1747,16 @@ async function toggleLeadConfirmed(leadKey, checked) {
     } else {
         console.warn('⚠️ [Lead] Non loggato: conferma non salvata su cloud.');
     }
+
+    // v2.5.66: rifletti SUBITO la conferma nel Google Sheet → l'Apps Script email ferma/riattiva
+    // il funnel per questo lead. leadConfirmedState è già aggiornato qui sopra. Fire-and-forget.
+    if (window.FunnelSheetSync && window.FunnelSheetSync.upsertLead) {
+        const lead = (leadSectionLeads || []).find(l => l._key === leadKey);
+        if (lead) {
+            try { window.FunnelSheetSync.upsertLead(buildFunnelLeadRow(lead)); }
+            catch (e) { console.warn('⚠️ [Funnel] upsert foglio fallito (ignoro):', e); }
+        }
+    }
 }
 window.toggleLeadConfirmed = toggleLeadConfirmed;
 
@@ -2005,7 +2015,38 @@ async function loadLeadSection() {
     // Tieni i dati in memoria e renderizza (i re-render successivi NON riscaricano da Drive).
     leadSectionLeads = leads;
     renderLeadList();
+
+    // v2.5.66: mirror dello stato funnel sul Google Sheet, così l'Apps Script "Funnel Notify"
+    // (che gira a browser chiuso) può leggere identità + flag "Confermato". Additivo e
+    // fire-and-forget: NON tocca gli appDataFolder né la UI, e non blocca mai il render.
+    if (window.FunnelSheetSync && window.FunnelSheetSync.syncAllLeads) {
+        try {
+            window.FunnelSheetSync.syncAllLeads(leads.map(buildFunnelLeadRow));
+        } catch (e) {
+            console.warn('⚠️ [Funnel] sync foglio fallito (ignoro):', e);
+        }
+    }
 }
+
+// v2.5.66: riga-mirror di un lead per il Google Sheet del funnel (vedi funnel-sheet-sync.js).
+// { leadKey, telefono, nome, codice, confirmed, t0ISO }. t0 best-effort (l'Apps Script usa
+// comunque l'orario dell'evento Calendar come T0 autorevole).
+function buildFunnelLeadRow(lead) {
+    let t0ISO = '';
+    try {
+        const res = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
+        if (res && res.t0) t0ISO = res.t0.toISOString();
+    } catch (e) { /* best-effort */ }
+    return {
+        leadKey: lead._key,
+        telefono: lead.telefono || '',
+        nome: (`${lead.nome || ''} ${lead.cognome || ''}`).trim(),
+        codice: leadCodes[lead._key] || '',
+        confirmed: !!leadConfirmedState[lead._key],
+        t0ISO: t0ISO
+    };
+}
+window.buildFunnelLeadRow = buildFunnelLeadRow;
 
 // v2.5.61: barra in cima alla sezione Lead — contatore live confermati/non confermati + filtro.
 // I conteggi vengono da leadSectionLeads + leadConfirmedState (lead correnti in memoria). Il filtro
