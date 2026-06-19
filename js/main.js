@@ -1275,34 +1275,22 @@ const LEAD_CHECKLIST_STEPS = [
 // NB: il render NON scrive mai in cloud (come da pattern v2.5.54): si salva solo su azione utente.
 let leadChecklistState = {};
 
-// v2.5.67: STATO conferma a 3 valori per lead. { "<leadKey>": "confermato"|"pending"|"no" }.
-// Sostituisce il booleano leadConfirmedState. REGOLA: qui dentro vivono SOLO gli stati scelti a
-// mano dall'utente (vincono sempre). Lo stato di DEFAULT (per i lead senza scelta manuale) NON è
-// persistito: viene calcolato al volo da getLeadStatus() in base al cutoff, così resta
-// auto-correggente. Funnel ATTIVO solo su "pending"; "confermato" e "no" lo congelano.
+// v2.5.69: STATO conferma a 3 valori, SCOPED ALL'APPUNTAMENTO. Forma:
+//   { "<leadKey>": { status: "confermato"|"pending"|"no", forCreatedISO: "<createdISO>" } }
+// REGOLA (decisa con Dante): OGNI lead/appuntamento che entra parte SEMPRE da "pending". La scelta
+// manuale (confermato/no) vale SOLO per l'appuntamento per cui è stata fatta (identificato dal
+// createdISO dell'evento). Se lo stesso lead ri-fissa un nuovo appuntamento (createdISO diverso),
+// lo stato torna a "pending" → riparte un funnel di conferma fresco per quel nuovo appuntamento.
+// La non-retroattività (niente mail sui vecchi) NON è più gestita qui col default "no": la
+// garantisce SOLO il cutoff lato Apps Script (eventi creati prima del cutoff non mandano mail).
+// Funnel ATTIVO solo su "pending"; "confermato" e "no" lo congelano. (v2.5.67: era un default
+// basato sul cutoff; v2.5.68: solo wiring foglio.)
+// Forma LEGACY tollerata in lettura: valore stringa "confermato"|"pending"|"no" (v2.5.67) =
+// stato non-scoped, applicato così com'è finché l'utente non riclicca.
 let leadStatusState = {};
 
 // v2.5.67: i 3 stati ammessi (ordine UI: positivo → neutro → negativo).
 const LEAD_STATUSES = ['confermato', 'pending', 'no'];
-
-// v2.5.67: cutoff non-retroattivo (da js/config.js). I lead il cui evento "LEAD - Call" è stato
-// CREATO prima di questo istante partono "no" (funnel chiuso, niente mail); da qui in poi "pending".
-function funnelCutoffMs() {
-    const iso = (window.APP_CONFIG && window.APP_CONFIG.FUNNEL_CUTOFF_ISO) || '';
-    const t = iso ? new Date(iso).getTime() : NaN;
-    return isNaN(t) ? 0 : t; // cutoff assente/illeggibile → 0 = tutto è "dopo" (fail-open verso pending)
-}
-
-// v2.5.67: stato di DEFAULT di un lead senza scelta manuale, dato l'ISO di creazione del suo evento.
-//   createdISO assente            → "no"   (non posso dimostrare che sia nuovo → lo tratto da vecchio)
-//   createdISO < cutoff           → "no"   (lead vecchio: funnel chiuso, niente mail retroattive)
-//   createdISO >= cutoff          → "pending" (lead nuovo: funnel attivo)
-function defaultLeadStatus(createdISO) {
-    if (!createdISO) return 'no';
-    const c = new Date(createdISO).getTime();
-    if (isNaN(c)) return 'no';
-    return c < funnelCutoffMs() ? 'no' : 'pending';
-}
 
 // v2.5.67: ISO di creazione dell'evento agganciato a un lead (≈ ingresso reale). '' se non risolvibile.
 function getLeadCreatedISO(lead) {
@@ -1312,11 +1300,22 @@ function getLeadCreatedISO(lead) {
     } catch (e) { return ''; }
 }
 
-// v2.5.67: stato EFFETTIVO di un lead = scelta manuale (se valida) altrimenti default da cutoff.
+// v2.5.69: stato EFFETTIVO di un lead per l'APPUNTAMENTO corrente.
+//   - scelta manuale (oggetto) valida SOLO se per lo stesso createdISO corrente → vince;
+//   - se l'appuntamento è cambiato (createdISO diverso) → "pending" (funnel fresco);
+//   - se il lead non ha un evento risolvibile (createdISO vuoto) → la scelta manuale, se c'è, si
+//     onora comunque (non c'è un appuntamento a cui ancorarla);
+//   - forma stringa legacy (v2.5.67) → applicata così com'è;
+//   - assente → "pending" (tutti entrano pending).
 function getLeadStatus(lead) {
     const stored = leadStatusState[lead._key];
-    if (LEAD_STATUSES.includes(stored)) return stored;
-    return defaultLeadStatus(getLeadCreatedISO(lead));
+    if (typeof stored === 'string') return LEAD_STATUSES.includes(stored) ? stored : 'pending';
+    if (stored && typeof stored === 'object' && LEAD_STATUSES.includes(stored.status)) {
+        const cur = getLeadCreatedISO(lead);
+        if (!cur) return stored.status;                       // niente appuntamento → onoro la scelta
+        return (stored.forCreatedISO === cur) ? stored.status : 'pending'; // appuntamento cambiato → fresco
+    }
+    return 'pending';
 }
 
 // v2.5.67: il funnel è CONGELATO per tutti gli stati tranne "pending".
@@ -1776,20 +1775,25 @@ async function toggleLeadChecklistStep(leadKey, step, checked) {
 }
 window.toggleLeadChecklistStep = toggleLeadChecklistStep;
 
-// v2.5.67: imposta lo STATO conferma del lead (confermato|pending|no). È SEMPRE una scelta manuale:
-// la scrivo in leadStatusState (vince sul default), salvo su Drive (stesso pattern della checklist),
+// v2.5.69: imposta lo STATO conferma del lead (confermato|pending|no). È SEMPRE una scelta manuale,
+// ANCORATA all'appuntamento corrente (createdISO): se domani il lead ri-fissa, lo stato torna a
+// "pending" da solo (vedi getLeadStatus). Salvo su Drive come oggetto { status, forCreatedISO },
 // poi re-render. Solo "pending" tiene il funnel attivo; gli altri due lo congelano.
 async function setLeadStatus(leadKey, status) {
     if (!LEAD_STATUSES.includes(status)) return;
-    if (leadStatusState[leadKey] === status) return; // no-op se invariato (niente re-render/scrittura)
-    leadStatusState[leadKey] = status;
+    const lead = (leadSectionLeads || []).find(l => l._key === leadKey);
+    const forCreatedISO = lead ? getLeadCreatedISO(lead) : '';
+    const prev = leadStatusState[leadKey];
+    // no-op se invariato (stesso stato per lo stesso appuntamento): niente re-render/scrittura
+    if (prev && typeof prev === 'object' && prev.status === status && prev.forCreatedISO === forCreatedISO) return;
+    leadStatusState[leadKey] = { status: status, forCreatedISO: forCreatedISO };
 
     renderLeadList();
 
     if (window.DriveStorage && window.accessToken) {
         try {
             await window.DriveStorage.save(STORAGE_KEYS.LEAD_STATUS, leadStatusState);
-            console.log(`💾 [Lead] Stato salvato (${leadKey} = ${status})`);
+            console.log(`💾 [Lead] Stato salvato (${leadKey} = ${status}, appuntamento ${forCreatedISO || 'n/d'})`);
         } catch (e) {
             console.error('❌ [Lead] Salvataggio stato fallito:', e);
         }
@@ -1799,12 +1803,9 @@ async function setLeadStatus(leadKey, status) {
 
     // v2.5.66/67: rifletti SUBITO lo stato nel Google Sheet → l'Apps Script email ferma/riattiva il
     // funnel per questo lead (mail solo se "pending"). leadStatusState è già aggiornato. Fire-and-forget.
-    if (window.FunnelSheetSync && window.FunnelSheetSync.upsertLead) {
-        const lead = (leadSectionLeads || []).find(l => l._key === leadKey);
-        if (lead) {
-            try { window.FunnelSheetSync.upsertLead(buildFunnelLeadRow(lead)); }
-            catch (e) { console.warn('⚠️ [Funnel] upsert foglio fallito (ignoro):', e); }
-        }
+    if (lead && window.FunnelSheetSync && window.FunnelSheetSync.upsertLead) {
+        try { window.FunnelSheetSync.upsertLead(buildFunnelLeadRow(lead)); }
+        catch (e) { console.warn('⚠️ [Funnel] upsert foglio fallito (ignoro):', e); }
     }
 }
 window.setLeadStatus = setLeadStatus;
