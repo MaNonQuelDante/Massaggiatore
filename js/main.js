@@ -1135,6 +1135,7 @@ async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, so
     // sovrascrivere/alterare le entry già presenti.
     try {
         await window.DriveStorage.save(STORAGE_KEYS.CRONOLOGIA, cronologia);
+        invalidateLeadDataCache(); // v2.5.76 PERF: nuova entry cronologia → la sezione Lead rilegge fresco
         console.log('✅ Cronologia salvata su Drive:', cronologia.length, 'messaggi');
     } catch (error) {
         console.error('❌ Errore salvataggio cronologia su Drive:', error);
@@ -1383,6 +1384,13 @@ let leadBindings = {};
 // NON deve riscaricare nulla da Drive.
 let leadSectionLeads = [];
 let leadSectionCandidates = [];
+// v2.5.76 PERF: cache TTL in memoria dei dati Lead caricati da Drive. Riaprendo la sezione entro
+// LEAD_DATA_TTL_MS si riusano i dati già in RAM (niente 7 round-trip a Drive). leadDataCacheAt =
+// timestamp dell'ultimo load completo riuscito; messo a 0 (invalidato) da OGNI save di dati lead
+// (checklist/times/stato/agganci/codici/cronologia), così dopo una modifica il render rilegge fresco.
+const LEAD_DATA_TTL_MS = 90000; // 90s — safe perché ogni save invalida la cache
+let leadDataCacheAt = 0;
+function invalidateLeadDataCache() { leadDataCacheAt = 0; }
 // v2.5.64: codici ID lead (cloud). leadCodes = { "<_key>": "L0001" }; leadCodeCounter = ultimo intero assegnato.
 let leadCodes = {};
 let leadCodeCounter = 0;
@@ -1867,6 +1875,7 @@ async function toggleLeadChecklistStep(leadKey, step, checked) {
         try {
             await window.DriveStorage.save(STORAGE_KEYS.LEAD_CHECKLIST, leadChecklistState);
             if (timesChanged) await window.DriveStorage.save(STORAGE_KEYS.LEAD_CHECKLIST_TIMES, leadChecklistTimes);
+            invalidateLeadDataCache(); // v2.5.76 PERF: dati cambiati su Drive → prossima apertura rilegge fresco
             console.log(`💾 [Lead] Checklist salvata (${leadKey} · ${step} = ${checked})`);
         } catch (e) {
             console.error('❌ [Lead] Salvataggio checklist fallito:', e);
@@ -1895,6 +1904,7 @@ async function setLeadStatus(leadKey, status) {
     if (window.DriveStorage && window.accessToken) {
         try {
             await window.DriveStorage.save(STORAGE_KEYS.LEAD_STATUS, leadStatusState);
+            invalidateLeadDataCache(); // v2.5.76 PERF: dati cambiati su Drive → prossima apertura rilegge fresco
             console.log(`💾 [Lead] Stato salvato (${leadKey} = ${status}, appuntamento ${forCreatedISO || 'n/d'})`);
         } catch (e) {
             console.error('❌ [Lead] Salvataggio stato fallito:', e);
@@ -1917,6 +1927,7 @@ async function saveLeadBindings() {
     if (window.DriveStorage && window.accessToken) {
         try {
             await window.DriveStorage.save(STORAGE_KEYS.LEAD_BINDINGS, leadBindings);
+            invalidateLeadDataCache(); // v2.5.76 PERF: dati cambiati su Drive → prossima apertura rilegge fresco
             console.log('💾 [Lead] Agganci salvati');
         } catch (e) {
             console.error('❌ [Lead] Salvataggio agganci fallito:', e);
@@ -2016,68 +2027,80 @@ async function loadLeadSection() {
         return;
     }
 
+    // v2.5.76 PERF: cache-hit. Se ho già i lead in RAM e l'ultimo load è recente (< TTL), NON
+    // riscarico nulla da Drive: ridisegno dai dati in memoria (leadSectionLeads + le globali
+    // checklist/bindings/stato/codici già popolate). La cache si invalida da sola a ogni save
+    // (invalidateLeadDataCache), quindi è sempre coerente con le modifiche fatte dall'utente.
+    if (leadSectionLeads.length && (Date.now() - leadDataCacheAt) < LEAD_DATA_TTL_MS) {
+        renderLeadList();
+        return;
+    }
+
     listContainer.innerHTML = '<p class="placeholder-text">Caricamento...</p>';
 
-    // Carica cronologia da Drive (con fallback localStorage, come fa saveToCronologia)
+    // v2.5.76 PERF: i 7 dati della sezione Lead si caricano TUTTI IN PARALLELO da Drive
+    // (Promise.allSettled) invece che in serie — prima ognuno aspettava il precedente, quindi
+    // l'apertura della sezione costava ~7× la latenza di Drive. Stesso identico comportamento di
+    // prima per ogni chiave: default a vuoto se assente, fallback localStorage per la cronologia
+    // (v2.5.72: NON usciamo se vuota — le schede possono nascere dai soli eventi calendario),
+    // migrazione una-tantum LEAD_CONFIRMED→LEAD_STATUS (eseguita DOPO i load, solo se LEAD_STATUS è
+    // davvero ASSENTE — non quando il suo load fallisce), e logging del singolo errore per chiave.
+    // (Le note storiche: v2.5.55 checklist, v2.5.57 agganci, v2.5.67 stato, v2.5.61 orari, v2.5.64 codici.)
     let cronologia = [];
-    if (window.DriveStorage) {
-        try {
-            const driveData = await window.DriveStorage.load(STORAGE_KEYS.CRONOLOGIA);
-            if (driveData) cronologia = driveData;
-        } catch (error) {
-            console.error('❌ Errore caricamento cronologia (Lead):', error);
-        }
-    }
-    if (cronologia.length === 0) {
-        const localData = localStorage.getItem(STORAGE_KEYS.CRONOLOGIA);
-        if (localData) {
-            try { cronologia = JSON.parse(localData); } catch (e) { /* ignora JSON rotto */ }
-        }
-    }
-
-    // v2.5.72: NON usciamo più se la cronologia è vuota. Le schede lead possono nascere anche dai
-    // SOLI eventi di calendario ("LEAD - Call"/"FOLLOWUP"), prima di qualunque messaggio: il caso
-    // "davvero nessun lead" lo gestiamo DOPO il merge calendario↔cronologia (vedi più sotto).
-    // Carico comunque checklist/stato/codici da Drive perché servono anche ai lead-da-calendario.
-
-    // v2.5.55: stato checkbox del funnel-conferma (cloud/Drive). Il render NON scrive mai in
-    // cloud (distingue loading da vuoto): se manca, le checkbox usano i default (vedi STEPS).
     leadChecklistState = {};
-    if (window.DriveStorage) {
-        try {
-            const saved = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CHECKLIST);
-            if (saved && typeof saved === 'object') leadChecklistState = saved;
-        } catch (error) {
-            console.error('❌ Errore caricamento checklist lead:', error);
-        }
-    }
-
-    // v2.5.57: agganci manuali lead↔evento (cloud/Drive). Come la checklist: il render non scrive mai.
     leadBindings = {};
-    if (window.DriveStorage) {
-        try {
-            const savedB = await window.DriveStorage.load(STORAGE_KEYS.LEAD_BINDINGS);
-            if (savedB && typeof savedB === 'object') leadBindings = savedB;
-        } catch (error) {
-            console.error('❌ Errore caricamento agganci lead:', error);
-        }
-    }
-
-    // v2.5.67: STATO conferma a 3 valori (cloud/Drive). Stesso pattern: il render non scrive mai
-    // (a parte la migrazione una-tantum qui sotto). Vengono caricati SOLO gli stati scelti a mano:
-    // il default (no/pending da cutoff) lo calcola getLeadStatus() al volo, mai persistito.
     leadStatusState = {};
+    leadChecklistTimes = {};
+    leadCodes = {};
+    leadCodeCounter = 0;
+
     if (window.DriveStorage) {
-        try {
-            const savedS = await window.DriveStorage.load(STORAGE_KEYS.LEAD_STATUS);
-            if (savedS && typeof savedS === 'object') {
-                leadStatusState = savedS;
-            } else {
-                // MIGRAZIONE una-tantum: il file LEAD_STATUS non esiste ancora → costruiscilo dal
-                // vecchio booleano LEAD_CONFIRMED ({key:true} → "confermato"). I lead non confermati
-                // a mano NON entrano qui: prenderanno il default (no/pending) da getLeadStatus().
-                // Il file LEGACY non viene cancellato (rollback). Persisto LEAD_STATUS così la
-                // migrazione non si ripete (la sua sola esistenza è la sentinella).
+        // L'ordine dell'array di risultati = l'ordine delle chiavi qui sotto.
+        const KEYS = [
+            STORAGE_KEYS.CRONOLOGIA,            // 0
+            STORAGE_KEYS.LEAD_CHECKLIST,        // 1
+            STORAGE_KEYS.LEAD_BINDINGS,         // 2
+            STORAGE_KEYS.LEAD_STATUS,           // 3
+            STORAGE_KEYS.LEAD_CHECKLIST_TIMES,  // 4
+            STORAGE_KEYS.LEAD_CODES,            // 5
+            STORAGE_KEYS.LEAD_CODE_COUNTER      // 6
+        ];
+        const results = await Promise.allSettled(KEYS.map(k => window.DriveStorage.load(k)));
+        // Valore di una load andata a buon fine; se 'rejected' logga il singolo errore (come i
+        // vecchi catch per-chiave) e restituisce undefined → la chiave prende il suo default.
+        const val = (i, label) => {
+            const r = results[i];
+            if (r.status === 'rejected') {
+                console.error(`❌ Errore caricamento ${label} (Lead):`, r.reason);
+                return undefined;
+            }
+            return r.value;
+        };
+
+        const cron = val(0, 'cronologia');
+        if (cron) cronologia = cron;
+
+        const saved = val(1, 'checklist lead');
+        if (saved && typeof saved === 'object') leadChecklistState = saved;
+
+        const savedB = val(2, 'agganci lead');
+        if (savedB && typeof savedB === 'object') leadBindings = savedB;
+
+        // STATO conferma (+ migrazione una-tantum). Distinguo load-fallita da load-vuota: la
+        // migrazione parte SOLO se la load è riuscita ma il file è assente (come il vecchio else);
+        // se la load è 'rejected' logghiamo l'errore e NON migriamo (come il vecchio catch esterno).
+        const rS = results[3];
+        if (rS.status === 'rejected') {
+            console.error('❌ Errore caricamento stato lead:', rS.reason);
+        } else if (rS.value && typeof rS.value === 'object') {
+            leadStatusState = rS.value;
+        } else {
+            // MIGRAZIONE una-tantum: il file LEAD_STATUS non esiste ancora → costruiscilo dal
+            // vecchio booleano LEAD_CONFIRMED ({key:true} → "confermato"). I lead non confermati
+            // a mano NON entrano qui: prenderanno il default (no/pending) da getLeadStatus().
+            // Il file LEGACY non viene cancellato (rollback). Persisto LEAD_STATUS così la
+            // migrazione non si ripete (la sua sola esistenza è la sentinella).
+            try {
                 const oldConfirmed = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CONFIRMED);
                 if (oldConfirmed && typeof oldConfirmed === 'object') {
                     Object.keys(oldConfirmed).forEach(k => { if (oldConfirmed[k]) leadStatusState[k] = 'confermato'; });
@@ -2090,41 +2113,29 @@ async function loadLeadSection() {
                         console.warn('⚠️ [v2.5.67] Salvataggio migrazione stato lead fallito (riproverà):', e);
                     }
                 }
+            } catch (error) {
+                console.error('❌ Errore caricamento stato lead:', error);
             }
-        } catch (error) {
-            console.error('❌ Errore caricamento stato lead:', error);
+        }
+
+        const savedT = val(4, 'orari checklist lead');
+        if (savedT && typeof savedT === 'object') leadChecklistTimes = savedT;
+
+        const savedCodes = val(5, 'codici lead');
+        if (savedCodes && typeof savedCodes === 'object') leadCodes = savedCodes;
+
+        const savedCounter = val(6, 'counter codici lead');
+        if (savedCounter && typeof savedCounter.next === 'number') leadCodeCounter = savedCounter.next;
+    }
+
+    // Fallback localStorage per la cronologia (come saveToCronologia): solo se Drive è vuoto/assente.
+    if (cronologia.length === 0) {
+        const localData = localStorage.getItem(STORAGE_KEYS.CRONOLOGIA);
+        if (localData) {
+            try { cronologia = JSON.parse(localData); } catch (e) { /* ignora JSON rotto */ }
         }
     }
 
-    // v2.5.61: timestamp congelati delle spunte funnel (cloud/Drive). File affiancato, parte vuoto.
-    leadChecklistTimes = {};
-    if (window.DriveStorage) {
-        try {
-            const savedT = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CHECKLIST_TIMES);
-            if (savedT && typeof savedT === 'object') leadChecklistTimes = savedT;
-        } catch (error) {
-            console.error('❌ Errore caricamento orari checklist lead:', error);
-        }
-    }
-
-    // v2.5.64: codici ID lead (cloud/Drive). Mappa _key→codice + counter "next" (= ultimo intero
-    // assegnato). Il render NON assegna codici nuovi a parte il backfill dei lead storici qui sotto.
-    leadCodes = {};
-    leadCodeCounter = 0;
-    if (window.DriveStorage) {
-        try {
-            const savedCodes = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CODES);
-            if (savedCodes && typeof savedCodes === 'object') leadCodes = savedCodes;
-        } catch (error) {
-            console.error('❌ Errore caricamento codici lead:', error);
-        }
-        try {
-            const savedCounter = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CODE_COUNTER);
-            if (savedCounter && typeof savedCounter.next === 'number') leadCodeCounter = savedCounter.next;
-        } catch (error) {
-            console.error('❌ Errore caricamento counter codici lead:', error);
-        }
-    }
     if (!leadCodeCounter) leadCodeCounter = Object.keys(leadCodes).length;
     window.leadCodes = leadCodes;
     window.leadCodeCounter = leadCodeCounter;
@@ -2224,6 +2235,7 @@ async function loadLeadSection() {
 
     // Tieni i dati in memoria e renderizza (i re-render successivi NON riscaricano da Drive).
     leadSectionLeads = leads;
+    leadDataCacheAt = Date.now(); // v2.5.76 PERF: load completo riuscito → cache valida per LEAD_DATA_TTL_MS
     renderLeadList();
 
     // v2.5.66: mirror dello stato funnel sul Google Sheet, così l'Apps Script "Funnel Notify"
