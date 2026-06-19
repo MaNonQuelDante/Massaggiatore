@@ -34,7 +34,7 @@ var CONFIG = {
 
   // ID del Google Sheet "Funnel Lead" che il web app popola (mirror dello stato funnel).
   // Lo trovi nell'URL del foglio: .../spreadsheets/d/<QUESTO>/edit
-  SHEET_ID: '',           // ← INCOLLA QUI L'ID DEL FOGLIO
+  SHEET_ID: '1Mclh4ua8_7a9d6nmOTh1WXxOGW0rXw5cNkXVLennQDE',  // v2.5.68: foglio "Massaggiatore - Funnel Lead" (stesso ID in js/config.js)
   SHEET_TAB: 'LEADS',     // tab con le righe lead
   LOG_TAB: 'LOG',         // tab di log invii (creata al volo se manca)
 

@@ -5,22 +5,22 @@
 // Configurazione centralizzata della versione
 const APP_CONFIG = {
     name: 'TESTmess',
-    version: '2.5.67',
-    fullName: 'v2.5.67 by Dante',
+    version: '2.5.68',
+    fullName: 'v2.5.68 by Dante',
     description: 'Stock Gain Messenger',
     author: 'Dante',
     // v2.5.66: ID del Google Sheet "Funnel Lead" (mirror dello stato funnel per l'Apps Script
     // "Funnel Notify" che manda email a browser chiuso). VUOTO = mirror spento (nessuna scrittura).
     // Incolla qui l'ID dall'URL del foglio (.../spreadsheets/d/<ID>/edit) e lo STESSO ID in
     // apps-script-funnel-notify/Config.gs → CONFIG.SHEET_ID.
-    FUNNEL_SHEET_ID: '',
+    FUNNEL_SHEET_ID: '1Mclh4ua8_7a9d6nmOTh1WXxOGW0rXw5cNkXVLennQDE',
     // v2.5.67: CUTOFF del funnel di conferma. Il funnel (3 stati + email) vale SOLO per i lead
     // il cui evento "LEAD - Call" è stato CREATO da questo istante in poi. Tutto ciò che è stato
     // creato prima → stato di default "no" (funnel chiuso, niente mail): non retroattivo.
     // Valore ISO FISSO = momento del deploy di questa migrazione (NON Date.now() runtime).
     // DEVE essere identico a CONFIG.FUNNEL_CUTOFF_ISO in apps-script-funnel-notify/Config.gs.
     FUNNEL_CUTOFF_ISO: '2026-06-19T11:52:00+02:00',
-    lastUpdate: '2026-06-19 - Funnel conferma a TRE STATI (Confermato/Pending/No) + T0 = CREAZIONE evento + non retroattivo. (1) T0 del funnel = data di CREAZIONE dell\'evento "LEAD - Call" (ingresso reale del lead), non più l\'orario di inizio appuntamento: stamp T+2/4/6h ora partono da quando il lead è entrato. (2) Il booleano "Confermato" diventa un controllo a 3 stati: Confermato e No congelano il funnel, solo Pending lo tiene attivo. L\'Apps Script invia l\'alert email (dante.consulenze@gmail.com) SOLO se lo stato è "pending". (3) NON retroattivo: cutoff FUNNEL_CUTOFF_ISO = momento del deploy; i lead creati prima partono "no" (zero mail indietro nel tempo), doppia barriera anche lato Apps Script. Sheet mirror: colonna confirmed→status, nuova colonna createdISO. Migrazione: vecchi LEAD_CONFIRMED:true → status "confermato". Precedente (2.5.66): Funnel Notify, notifiche EMAIL automatiche sul funnel lead.'
+    lastUpdate: '2026-06-19 (v2.5.68) - Attivato il mirror Funnel: creato il Google Sheet "Massaggiatore - Funnel Lead" e cablato FUNNEL_SHEET_ID (stesso ID anche in apps-script-funnel-notify/Config.gs → SHEET_ID). Da qui il web rispecchia lo stato funnel sul foglio e l\'Apps Script può leggerlo a browser chiuso. Precedente (v2.5.67) - Funnel conferma a TRE STATI (Confermato/Pending/No) + T0 = CREAZIONE evento + non retroattivo. (1) T0 del funnel = data di CREAZIONE dell\'evento "LEAD - Call" (ingresso reale del lead), non più l\'orario di inizio appuntamento: stamp T+2/4/6h ora partono da quando il lead è entrato. (2) Il booleano "Confermato" diventa un controllo a 3 stati: Confermato e No congelano il funnel, solo Pending lo tiene attivo. L\'Apps Script invia l\'alert email (dante.consulenze@gmail.com) SOLO se lo stato è "pending". (3) NON retroattivo: cutoff FUNNEL_CUTOFF_ISO = momento del deploy; i lead creati prima partono "no" (zero mail indietro nel tempo), doppia barriera anche lato Apps Script. Sheet mirror: colonna confirmed→status, nuova colonna createdISO. Migrazione: vecchi LEAD_CONFIRMED:true → status "confermato". Precedente (2.5.66): Funnel Notify, notifiche EMAIL automatiche sul funnel lead.'
 };
 
 // ===== GITHUB AUTO-PUSH CONFIGURATION =====
