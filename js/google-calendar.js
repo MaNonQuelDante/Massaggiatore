@@ -986,32 +986,54 @@ function extractNameFromEvent(event) {
 }
 
 // ===== ESTRAI TELEFONO DA EVENTO =====
+// v2.5.71: estrazione telefono ELASTICA. Le vecchie regex non reggevano formati comuni come
+//   (342) 354-2724 → le parentesi/trattini spezzavano il match e nessun pattern accettava un
+// mobile a 10 cifre senza prefisso scritto così. Ora tolleriamo i formati più disparati con cui un
+// numero finisce nella descrizione/posizione dell'evento Google:
+//   (342) 354-2724 · 342.354.2724 · 342 3542724 · +39 342 354 2724 · 0039 3423542724 · 393423542724
+// Strategia: 1) se c'è un'etichetta (Telefono:/Tel:/Cell:/WhatsApp:…) prendo il blocco dopo e lo
+// normalizzo (permissivo, accetta anche fissi). 2) altrimenti scorro i "blocchi" che sembrano un
+// numero (cifre + separatori telefonici) e tengo il primo che normalizza a un mobile italiano.
 function extractPhoneFromEvent(event) {
-    // Cerca numero di telefono in description o location
     const text = `${event.description || ''} ${event.location || ''}`;
-    
-    // Pattern migliorato per numeri italiani
-    // Cerca pattern come "Telefono: +393478351560" o "Tel: 333 1234567"
-    const phonePatterns = [
-        /(?:telefono|tel|phone|cell|cellulare)[:\s]+([+]?39)?[\s]?([0-9]{9,13})/gi,
-        /([+]39|0039)[\s]?([3][0-9]{2})[\s]?([0-9]{6,7})/g,
-        /([3][0-9]{2})[\s]?([0-9]{6,7})/g,
-        /([+]39|0039)[\s]?([0-9]{2,4})[\s]?([0-9]{6,8})/g
-    ];
-    
-    for (const pattern of phonePatterns) {
-        const match = text.match(pattern);
-        if (match && match[0]) {
-            // Pulisci e formatta
-            let phone = match[0].replace(/[^0-9+]/g, '');
-            // Aggiungi +39 se manca e inizia con 3
-            if (phone.startsWith('3') && !phone.startsWith('+39')) {
-                phone = '+39' + phone;
-            }
-            return phone;
-        }
+    if (!text.trim()) return '';
+
+    // 1) Numero ETICHETTATO: prendo il blocco "telefonico" subito dopo l'etichetta e lo normalizzo.
+    const labeled = text.match(/(?:telefono|tel|phone|cell|cellulare|mobile|whats?app|wa)[\s.:]*([+(]?[0-9][0-9()\s.\-]{6,}[0-9])/i);
+    if (labeled && labeled[1]) {
+        const p = normalizeItalianPhone(labeled[1], true);
+        if (p) return p;
     }
-    
+
+    // 2) Nessuna etichetta utile: scorro i blocchi che sembrano un numero e tengo il primo valido.
+    //    Qui sono più rigido (solo mobile italiano canonico) per non pescare date/importi.
+    const blocks = text.match(/[+(]?[0-9][0-9()\s.\-]{6,}[0-9]/g) || [];
+    for (const b of blocks) {
+        const p = normalizeItalianPhone(b, false);
+        if (p) return p;
+    }
+    return '';
+}
+
+// v2.5.71: normalizza un pezzo di testo "telefonico" → "+39XXXXXXXXXX", oppure '' se non plausibile.
+// Tollera +, 0039, prefisso 39, parentesi, trattini, punti e spazi. `labeled`=true (numero preso da
+// un'etichetta esplicita) allenta i controlli e accetta anche i fissi; con false accetta SOLO il
+// mobile italiano a 10 cifre che inizia per 3 (riduce i falsi positivi su numeri vaganti: date, ecc).
+function normalizeItalianPhone(raw, labeled) {
+    if (!raw) return '';
+    const hadPlus = String(raw).trim().startsWith('+');
+    let digits = String(raw).replace(/\D/g, '');
+    if (!digits) return '';
+    let hadCC = false; // prefisso internazionale esplicito (+39 / 0039 / 39 davanti a un numero lungo)
+    if (digits.startsWith('0039')) { digits = digits.slice(4); hadCC = true; }
+    else if (hadPlus && digits.startsWith('39')) { digits = digits.slice(2); hadCC = true; }
+    else if (digits.startsWith('39') && digits.length > 10) { digits = digits.slice(2); hadCC = true; }
+    if (!digits) return '';
+
+    // Mobile italiano canonico: 10 cifre, inizia per 3 → sempre valido.
+    if (digits.length === 10 && digits.startsWith('3')) return '+39' + digits;
+    // Con prefisso internazionale esplicito o numero etichettato: fidati di più (fissi inclusi).
+    if ((hadCC || labeled) && digits.length >= 9 && digits.length <= 11) return '+39' + digits;
     return '';
 }
 

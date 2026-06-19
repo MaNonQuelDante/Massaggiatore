@@ -1127,13 +1127,17 @@ body {
     color: var(--gray-600);
 }
 
-/* Funnel congelato: step disabilitati ma VISIBILI (orari barrati) */
+/* Funnel congelato (Confermato/No): step READ-ONLY ma ben leggibili.
+   v2.5.71: niente più opacity:0.55 (che ingrigiva e "spegneva" tutto) e niente attributo `disabled`
+   lato HTML. Gli step COMPLETATI restano blu (spunta bianca su blu via accent-color), quelli non
+   completati restano neutri. Read-only = pointer-events:none (nessun toggle col mouse) + cursor
+   default. Lo strikethrough sull'orario resta come indicatore "congelato". */
 .lead-check-row.lead-funnel-frozen {
-    opacity: 0.55;
-    cursor: not-allowed;
+    cursor: default;
+    pointer-events: none;
 }
 .lead-check-row.lead-funnel-frozen input[type="checkbox"] {
-    cursor: not-allowed;
+    cursor: default;
 }
 .lead-check-row.lead-funnel-frozen .lc-time {
     text-decoration: line-through;

@@ -1640,8 +1640,15 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
     let rows = '';
     LEAD_CHECKLIST_STEPS.forEach(step => {
         const checked = (state[step.key] !== undefined) ? state[step.key] : (step.defaultChecked || false);
-        // v2.5.67: congelati tutti gli step tranne "ingresso" quando il funnel è congelato (≠ pending).
-        const frozen = frozenFunnel && step.key !== 'ingresso';
+        // v2.5.71: a funnel congelato (Confermato/No) TUTTI gli step diventano read-only in modo
+        // COERENTE. Prima c'era l'eccezione "ingresso" (frozenFunnel && step.key !== 'ingresso'):
+        // l'ingresso restava blu/cliccabile mentre gli altri completati si ingrigivano → incoerenza
+        // visiva (un quadratino blu, gli altri grigi). Ora tutti gli step completati restano blu
+        // (spunta bianca su blu), i non completati restano neutri/vuoti. Read-only via classe
+        // .lead-funnel-frozen (CSS pointer-events:none) + tabindex -1: NON uso più `disabled`, che
+        // ingrigisce la checkbox e ne uccide l'accent-color blu. Guardia anche lato JS in
+        // toggleLeadChecklistStep, così il blocco regge a prescindere dal CSS.
+        const frozen = frozenFunnel;
         let timeHtml = '';
         if (step.offsetH !== null) {
             const t = leadStepTime(t0, step.offsetH);
@@ -1649,7 +1656,7 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
         }
         const rowHtml = `
                     <label class="lead-check-row${checked ? ' done' : ''}${frozen ? ' lead-funnel-frozen' : ''}">
-                        <input type="checkbox" data-lead-key="${keyAttr}" data-step="${step.key}"${checked ? ' checked' : ''}${frozen ? ' disabled' : ''}>
+                        <input type="checkbox" data-lead-key="${keyAttr}" data-step="${step.key}"${checked ? ' checked' : ''}${frozen ? ' tabindex="-1"' : ''}>
                         <span class="lc-label">${step.label}</span>
                         ${timeHtml}
                     </label>`;
@@ -1742,6 +1749,14 @@ function renderLeadPicker(leadKey, keyAttr) {
 
 // Toggle di una checkbox: aggiorna lo stato e lo persiste su Drive (stesso meccanismo dei dati lead).
 async function toggleLeadChecklistStep(leadKey, step, checked) {
+    // v2.5.71: read-only quando il funnel è congelato (Confermato/No). La UI è già bloccata via CSS
+    // (.lead-funnel-frozen → pointer-events:none) ma qui blindo anche lato logica: ignoro il toggle
+    // e ri-renderizzo per ripristinare lo stato visivo. Così niente spunte fantasma a funnel chiuso.
+    const lockedLead = (leadSectionLeads || []).find(l => l._key === leadKey);
+    if (lockedLead && isLeadFunnelFrozen(getLeadStatus(lockedLead))) {
+        renderLeadList();
+        return;
+    }
     if (!leadChecklistState[leadKey]) leadChecklistState[leadKey] = {};
     leadChecklistState[leadKey][step] = checked;
 
