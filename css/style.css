@@ -823,6 +823,86 @@ body {
     gap: 8px;
 }
 
+/* ===== v2.5.74: REDESIGN SCHEDA LEAD — header avatar, ID discreto, blocchi puliti =====
+   La card lead riusa .cronologia-item (deep-link + handler) ma con layout proprio: tutto è
+   scoped a .lead-card per non toccare le card della cronologia messaggi (stessa classe base). */
+.lead-card { padding: 14px 16px; }
+
+/* Blocco 1 — header: avatar iniziali a sx, nome + ID e riga meta a dx */
+.lead-card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.lead-avatar {
+    flex-shrink: 0;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #ede9fe;            /* viola tenue, in linea col brand */
+    color: var(--bg-gradient-end);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+.lead-head-main { min-width: 0; flex: 1; }
+.lead-head-title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.lead-name {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--gray-800);
+}
+.lead-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    color: var(--gray-400);
+    letter-spacing: 0.5px;
+}
+.lead-head-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 3px;
+    font-size: 13px;
+    color: var(--gray-500);
+}
+.lead-head-meta i { font-size: 12px; }
+.lead-meta-sep { color: var(--gray-300); }
+
+/* Blocco 2 — contatto: telefono a sx, WhatsApp (verde tenue) a dx, divider sopra */
+.lead-card-contact {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 0.5px solid var(--gray-200);
+}
+.lead-contact-phone {
+    font-size: 13px;
+    color: var(--gray-600);
+}
+.lead-contact-phone i { color: var(--gray-400); margin-right: 4px; }
+.lead-card-contact .lead-wa-btn {
+    margin-left: 0;
+    padding: 5px 10px;
+    font-size: 12px;
+    background: #e1f5ee;
+    color: #0f6e56;
+}
+.lead-card-contact .lead-wa-btn:hover { background: #cdeee1; }
+
 /* v2.5.53: bottone WhatsApp diretto sulla card di ogni lead */
 .lead-wa-btn {
     display: inline-flex;
@@ -1080,41 +1160,42 @@ body {
 /* Controllo segmentato a 3 stati (Confermato / Pending / No) nell'header della card.
    Sostituisce la vecchia checkbox "Appuntamento confermato" (v2.5.61). Solo "Pending" tiene
    il funnel attivo (e fa partire le mail); Confermato e No lo congelano. */
-.lead-status-control {
-    display: inline-flex;
-    margin-bottom: 12px;
-    border: 1px solid var(--gray-200);
-    border-radius: 10px;
-    overflow: hidden;
-    background: #fff;
+/* v2.5.74: Blocco 3 — stato conferma. 3 bottoni piccoli inline a larghezza uguale, divider sopra. */
+.lead-card .lead-status-control {
+    display: flex;
+    gap: 6px;
+    margin: 12px 0;
+    padding-top: 12px;
+    border-top: 0.5px solid var(--gray-200);
 }
-.lead-status-btn {
-    padding: 8px 14px;
-    border: none;
-    border-right: 1px solid var(--gray-200);
-    background: #fff;
-    font-size: 13px;
+.lead-card .lead-status-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 7px 8px;
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    background: transparent;
+    font-size: 12px;
     font-weight: 600;
-    color: var(--gray-600);
+    color: var(--gray-500);
     cursor: pointer;
     user-select: none;
-    transition: background 0.12s, color 0.12s;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.lead-status-btn:last-child { border-right: none; }
-.lead-status-btn:hover { background: var(--gray-50); }
+.lead-card .lead-status-btn:hover { background: var(--gray-50); }
 
-/* Stato attivo: colore semantico per ciascuno dei 3 valori */
-.lead-status-btn.lead-status-confermato.active {
-    background: #16a34a;
-    color: #fff;
+/* Stato attivo: sfondo tenue + bordo colorato, semantico per ciascuno dei 3 valori */
+.lead-card .lead-status-btn.lead-status-confermato.active {
+    background: #f0fdf4; color: #15803d; border-color: #86efac;
 }
-.lead-status-btn.lead-status-pending.active {
-    background: #f59e0b;
-    color: #fff;
+.lead-card .lead-status-btn.lead-status-pending.active {
+    background: #fffbeb; color: #b45309; border-color: #fcd34d;
 }
-.lead-status-btn.lead-status-no.active {
-    background: #dc2626;
-    color: #fff;
+.lead-card .lead-status-btn.lead-status-no.active {
+    background: #fef2f2; color: #b91c1c; border-color: #fca5a5;
 }
 
 /* Tag accanto al titolo del funnel: verde "Confermato" / grigio "Non confermato" */
@@ -1837,19 +1918,8 @@ body {
 }
 
 /* ===== v2.5.64: CODICE ID LEAD + DEEP-LINK SCHEDA ===== */
-/* Badge col codice ID (L0001…) accanto al nome nella card lead */
-.lead-code-badge {
-    display: inline-block;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    color: #fff;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-radius: 6px;
-    padding: 1px 7px;
-    margin-left: 6px;
-    vertical-align: middle;
-}
+/* v2.5.74: il vecchio .lead-code-badge (badge gradiente gigante, troppo invasivo) è stato
+   sostituito dall'ID discreto .lead-code accanto al nome (vedi "REDESIGN SCHEDA LEAD"). */
 
 /* Evidenziazione temporanea della card aperta da deep-link (?id=Lxxxx) */
 .lead-card-highlight {

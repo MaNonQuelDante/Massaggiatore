@@ -2293,6 +2293,19 @@ const LEAD_FUNNEL_LOG_LABELS = {
     noshow:      '🚫 Inviato a Gruppo NoShow'
 };
 
+// v2.5.74: iniziali per l'avatar della scheda lead. "Giacomo Bizzini" → "GB"; un solo nome →
+// prime due lettere; niente nome → "•". Calcolate dal nome, niente da passare a mano.
+function leadInitials(nome, cognome) {
+    const n = (nome || '').trim();
+    const c = (cognome || '').trim();
+    if (n && c) return (n[0] + c[0]).toUpperCase();
+    const solo = n || c;
+    if (!solo) return '•';
+    const parts = solo.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return solo.slice(0, 2).toUpperCase();
+}
+
 // v2.5.73: HTML di UNA scheda lead. Estratto da renderLeadList per riusarlo sia per i pending
 // (vista piena) sia per l'archivio (confermati+no) dentro il <details> collassato — senza
 // duplicare codice. `leadStatus` = stato conferma effettivo (confermato|pending|no), già calcolato.
@@ -2301,10 +2314,13 @@ function buildLeadCardHtml(lead, leadStatus) {
     const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '—'; // v2.5.59: +39 339 486 5982
     const count = lead.messaggi.length;
     const keyAttr = encodeURIComponent(lead._key);
-    // v2.5.64: codice ID lead (deep-link da Calendar). Esposto sulla card come badge + attributo.
+    // v2.5.64: codice ID lead (deep-link da Calendar). Resta come attributo data-lead-code per il
+    // deep-link. v2.5.74: niente più badge gigante colorato (era invasivo) → ID piccolo monospace
+    // accanto al nome, e iniziali nell'avatar.
     const leadCode = leadCodes[lead._key] || '';
     lead._code = leadCode || null;
-    const codeBadge = leadCode ? ` <span class="lead-code-badge" title="Codice scheda lead">${leadCode}</span>` : '';
+    const codeHtml = leadCode ? `<span class="lead-code" title="Codice scheda lead">${leadCode}</span>` : '';
+    const initials = leadInitials(lead.nome, lead.cognome);
 
     // v2.5.55/57: blocco funnel-conferma. Risolve T0 con agganci manuali + automatico + proposte.
     // v2.5.61: calcolato PRIMA del log perché serve a datare la riga "ingresso" (usa createdAt).
@@ -2398,21 +2414,33 @@ function buildLeadCardHtml(lead, leadStatus) {
                 ${statusBtn('no', '✖️', 'No')}
             </div>`;
 
-    // v2.5.63: giorno+ora dell'APPUNTAMENTO accanto al nome (t0 = start evento "LEAD - Call"
-    // o orario a mano). Distinto dall'"ingresso" nel log, che usa lo stamp di creazione.
+    // v2.5.63/74: giorno+ora dell'APPUNTAMENTO (t0 = start evento "LEAD - Call" o orario a mano),
+    // mostrato nella riga meta sotto al nome. Distinto dall'"ingresso" nel log (stamp di creazione).
     const apptWhen = resolution.t0 ? fmtLeadEventWhen(resolution.t0) : '';
-    const apptHtml = apptWhen
-        ? ` <span class="lead-appt-when" style="font-size: 12px; color: var(--gray-500); font-weight: normal;">· 📅 ${apptWhen}</span>`
+    const apptMeta = apptWhen
+        ? `<span class="lead-meta-when"><i class="fas fa-calendar-day"></i> ${apptWhen}</span><span class="lead-meta-sep">·</span>`
         : '';
 
+    // v2.5.74: layout a blocchi (header / contatto / stato) separati da divider sottili.
+    // Resta su .cronologia-item (deep-link + handler dei bottoni stato la cercano con .closest),
+    // con .lead-card aggiunta per agganciare il nuovo CSS senza toccare le card della cronologia.
     return `
-        <div class="cronologia-item" id="lead-card-${keyAttr}" data-lead-code="${leadCode}">
-            <div class="cronologia-header">
-                <strong>${nomeCompleto}</strong>${codeBadge}${apptHtml}
-                <span style="font-size: 13px; color: var(--gray-500);">
-                    <i class="fas fa-phone"></i> ${telefono} · ${count} ${count === 1 ? 'azione' : 'azioni'}
-                    ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
-                </span>
+        <div class="cronologia-item lead-card" id="lead-card-${keyAttr}" data-lead-code="${leadCode}">
+            <div class="lead-card-head">
+                <div class="lead-avatar" aria-hidden="true">${initials}</div>
+                <div class="lead-head-main">
+                    <div class="lead-head-title">
+                        <span class="lead-name">${nomeCompleto}</span>
+                        ${codeHtml}
+                    </div>
+                    <div class="lead-head-meta">
+                        ${apptMeta}<span class="lead-meta-count">${count} ${count === 1 ? 'azione' : 'azioni'}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="lead-card-contact">
+                <span class="lead-contact-phone"><i class="fas fa-phone"></i> ${telefono}</span>
+                ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
             </div>
             ${statusControlHtml}
             ${checklistHtml}
