@@ -65,6 +65,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     setupSidebar();
     setupNavigation();
+    setupClickDoctor(); // v2.5.75: rete di sicurezza contro overlay fantasma che bloccano i click
     await setupEventListeners();
     await loadTemplates();
     await updatePreview();
@@ -144,6 +145,39 @@ function setupSidebar() {
     
     closeBtn.addEventListener('click', closeSidebar);
     overlay.addEventListener('click', closeSidebar);
+}
+
+// ===== v2.5.75: CLICK DOCTOR — rete di sicurezza anti "non clicco da nessuna parte" =====
+// Sintomo ricorrente: un elemento fixed/absolute a (quasi) tutto schermo ma INVISIBILE (opacity≈0
+// o visibility:hidden lasciato attivo) resta sopra la pagina e mangia OGNI click. Nessun controllo
+// vero è mai così (grande + invisibile + che cattura i click): se lo trovo al primo punto del click
+// è per forza un overlay fantasma → lo neutralizzo (pointer-events:none), lo NOMINO con un toast
+// visibile (così sappiamo subito il colpevole, senza aprire la console) e lo loggo. Non rido il
+// click: l'utente ri-clicca e ora passa. Difensivo e a prova di errore: non deve MAI rompere l'app.
+function setupClickDoctor() {
+    document.addEventListener('pointerdown', (e) => {
+        try {
+            const x = e.clientX, y = e.clientY;
+            let el = document.elementFromPoint(x, y);
+            let hops = 0;
+            while (el && el !== document.body && el !== document.documentElement && hops++ < 6) {
+                const cs = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                const big = r.width >= window.innerWidth * 0.5 && r.height >= window.innerHeight * 0.5;
+                const invisible = parseFloat(cs.opacity) < 0.05 || cs.visibility === 'hidden';
+                const floating = cs.position === 'fixed' || cs.position === 'absolute';
+                if (big && invisible && floating && cs.pointerEvents !== 'none') {
+                    el.style.pointerEvents = 'none';
+                    const sel = el.id ? '#' + el.id
+                        : (el.className ? '.' + String(el.className).trim().split(/\s+/).join('.') : el.tagName.toLowerCase());
+                    console.error('🩺 [Click Doctor] Overlay fantasma che bloccava i click NEUTRALIZZATO:', sel, el);
+                    if (window.showLeadToast) window.showLeadToast('Sbloccato overlay fantasma: ' + sel + ' — ri-clicca');
+                    return;
+                }
+                el = el.parentElement;
+            }
+        } catch (_) { /* il doctor non deve mai far esplodere l'app */ }
+    }, true);
 }
 
 // ===== NAVIGAZIONE PAGINE =====
@@ -2468,7 +2502,13 @@ function renderLeadList() {
     // v2.5.73: vista DI DEFAULT ('pending') = solo i pending in chiaro + un blocco <details>
     // collassato ("Archivio") coi confermati e i "no" sotto. Gli altri filtri (all/confermato/no)
     // restano liste piatte come prima. La card è generata da buildLeadCardHtml (no duplicazione).
+    // v2.5.75 ARCHIVIO LAZY: le card d'archivio (confermati+no) NON vengono più costruite al render
+    // della pagina — solo i pending sono "live". Il <details> nasce con summary + body VUOTO; le sue
+    // card si costruiscono SOLO alla prima apertura (vedi listener 'toggle' più sotto). Risparmia
+    // tutto il lavoro di buildLeadCardHtml (log+checklist+picker per ogni archiviato) a chi apre la
+    // sezione solo per lavorare i pending.
     let html = '';
+    let archiveCtx = null; // {leads, statusByKey} per il build lazy dell'archivio
     if (leadFilterMode === 'pending') {
         const pendingLeads = leadSectionLeads.filter(l => statusByKey[l._key] === 'pending');
         const archiveLeads = leadSectionLeads.filter(l => {
@@ -2480,15 +2520,16 @@ function renderLeadList() {
         if (!html) html = '<p class="placeholder-text">Nessun lead pending.</p>';
 
         // Archivio collassabile (chiuso di default; lo stato di apertura NON è persistito).
+        // v2.5.75: body VUOTO con placeholder — niente buildLeadCardHtml qui (lazy alla 1ª apertura).
         if (archiveLeads.length) {
             const nConf = archiveLeads.filter(l => statusByKey[l._key] === 'confermato').length;
             const nNo = archiveLeads.filter(l => statusByKey[l._key] === 'no').length;
-            const archiveCards = archiveLeads.map(l => buildLeadCardHtml(l, statusByKey[l._key])).join('');
             html += `
             <details class="lead-archive">
                 <summary class="lead-archive-summary">🗂️ Archivio · ✅ ${nConf} confermati · ✖️ ${nNo} no</summary>
-                <div class="lead-archive-body">${archiveCards}</div>
+                <div class="lead-archive-body"><p class="placeholder-text lead-archive-hint">Apri per caricare l'archivio…</p></div>
             </details>`;
+            archiveCtx = { leads: archiveLeads, statusByKey };
         }
     } else {
         // Filtri espliciti: lista piatta. 'all' = tutti; 'confermato'/'no' = solo quello stato.
@@ -2504,6 +2545,26 @@ function renderLeadList() {
 
     // v2.5.57: delega eventi agganciata una sola volta sul contenitore (sopravvive ai re-render).
     ensureLeadDelegation(listContainer);
+
+    // v2.5.75: ARCHIVIO LAZY — costruisco le card confermati/no SOLO alla prima apertura del
+    // <details>, non al render. La delega click/change è su #leadList (che CONTIENE il details e il
+    // suo body) → le card iniettate qui sono già coperte, nessun nuovo bind. Ogni re-render rigenera
+    // il details vuoto e ri-aggancia questo listener (flag _archiveLoaded sul nuovo elemento).
+    if (archiveCtx) {
+        const details = listContainer.querySelector('details.lead-archive');
+        if (details) {
+            details.addEventListener('toggle', () => {
+                if (!details.open || details._archiveLoaded) return;
+                details._archiveLoaded = true;
+                const body = details.querySelector('.lead-archive-body');
+                if (body) {
+                    body.innerHTML = archiveCtx.leads
+                        .map(l => buildLeadCardHtml(l, archiveCtx.statusByKey[l._key]))
+                        .join('');
+                }
+            });
+        }
+    }
 }
 
 // ===== v2.5.64: TOAST LEGGERO (nessuna libreria) =====

@@ -1406,6 +1406,10 @@ body {
     position: fixed;
     bottom: 30px;
     right: 30px;
+    /* v2.5.75 FIX CLICK: il toast è fixed/z-index 3000 e resta SEMPRE nel DOM (opacity:0 da
+       nascosto). Senza questo intercettava i click di QUALSIASI cosa gli scorresse sotto
+       nell'angolo basso-destra ("alcune volte non clicco"). Un toast non si clicca mai → off. */
+    pointer-events: none;
     background: var(--whatsapp-green);
     color: white;
     padding: 16px 24px;
