@@ -1075,41 +1075,56 @@ body {
 }
 .lead-link-muted:hover { color: var(--gray-700); }
 
-/* ===== LEAD: flag conferma + filtro/contatore + log azioni funnel (v2.5.61) ===== */
+/* ===== LEAD: stato conferma a 3 valori + filtro/contatore + log azioni funnel (v2.5.67) ===== */
 
-/* Checkbox "Appuntamento confermato" nell'header della card */
-.lead-confirm-toggle {
-    display: flex;
-    align-items: center;
-    gap: 9px;
+/* Controllo segmentato a 3 stati (Confermato / Pending / No) nell'header della card.
+   Sostituisce la vecchia checkbox "Appuntamento confermato" (v2.5.61). Solo "Pending" tiene
+   il funnel attivo (e fa partire le mail); Confermato e No lo congelano. */
+.lead-status-control {
+    display: inline-flex;
     margin-bottom: 12px;
-    padding: 8px 12px;
-    background: #fff;
     border: 1px solid var(--gray-200);
     border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+}
+.lead-status-btn {
+    padding: 8px 14px;
+    border: none;
+    border-right: 1px solid var(--gray-200);
+    background: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-600);
     cursor: pointer;
     user-select: none;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--gray-700);
+    transition: background 0.12s, color 0.12s;
 }
-.lead-confirm-toggle input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    flex-shrink: 0;
-    cursor: pointer;
-    accent-color: #16a34a;
+.lead-status-btn:last-child { border-right: none; }
+.lead-status-btn:hover { background: var(--gray-50); }
+
+/* Stato attivo: colore semantico per ciascuno dei 3 valori */
+.lead-status-btn.lead-status-confermato.active {
+    background: #16a34a;
+    color: #fff;
 }
-.lead-confirm-toggle.is-confirmed {
-    background: #f0fdf4;
-    border-color: #86efac;
-    color: #166534;
+.lead-status-btn.lead-status-pending.active {
+    background: #f59e0b;
+    color: #fff;
+}
+.lead-status-btn.lead-status-no.active {
+    background: #dc2626;
+    color: #fff;
 }
 
-/* Tag verde "Appuntamento confermato" (sostituisce il tag blu di stato) */
+/* Tag accanto al titolo del funnel: verde "Confermato" / grigio "Non confermato" */
 .lead-checklist-tag.lead-tag-confirmed {
     background: #dcfce7;
     color: #166534;
+}
+.lead-checklist-tag.lead-tag-no {
+    background: var(--gray-200);
+    color: var(--gray-600);
 }
 
 /* Funnel congelato: step disabilitati ma VISIBILI (orari barrati) */

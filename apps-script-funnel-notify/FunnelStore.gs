@@ -5,8 +5,9 @@
  * Legge il Google Sheet "Funnel Lead" (mirror scritto dal web app) e risponde a due
  * domande dello scheduler: "questo lead è Confermato?" e "dammi i dati del lead".
  *
- * Il foglio (tab CONFIG.SHEET_TAB) ha intestazione:
- *   leadKey | telefono | nome | codice | confirmed | t0ISO | updatedAt
+ * Il foglio (tab CONFIG.SHEET_TAB) ha intestazione (v2.5.67):
+ *   leadKey | telefono | nome | codice | status | t0ISO | createdISO | updatedAt
+ *   (legge ancora il vecchio schema con colonna "confirmed" come fallback.)
  *
  * Il match si fa PER TELEFONO NORMALIZZATO (prefisso 39 agnostico, ultime cifre),
  * con leadKey come chiave secondaria. Cache in memoria per la singola esecuzione.
@@ -60,23 +61,30 @@ var FunnelStore = (function () {
     // Intestazione → indici colonna (tollerante all'ordine).
     var head = values[0].map(function (h) { return String(h).trim().toLowerCase(); });
     var ci = {
-      leadKey:   head.indexOf('leadkey'),
-      telefono:  head.indexOf('telefono'),
-      nome:      head.indexOf('nome'),
-      codice:    head.indexOf('codice'),
-      confirmed: head.indexOf('confirmed'),
-      t0ISO:     head.indexOf('t0iso')
+      leadKey:    head.indexOf('leadkey'),
+      telefono:   head.indexOf('telefono'),
+      nome:       head.indexOf('nome'),
+      codice:     head.indexOf('codice'),
+      status:     head.indexOf('status'),       // v2.5.67: confermato|pending|no
+      confirmed:  head.indexOf('confirmed'),     // LEGACY (schema v2.5.66): fallback se manca 'status'
+      t0ISO:      head.indexOf('t0iso'),
+      createdISO: head.indexOf('creatediso')     // v2.5.67: data creazione evento (T0 funnel)
     };
 
     for (var r = 1; r < values.length; r++) {
       var row = values[r];
+      // v2.5.67: stato a 3 valori. Se manca la colonna 'status' (vecchio foglio) ricado sul
+      // booleano 'confirmed': TRUE → "confermato", altrimenti vuoto (= pending lato scheduler).
+      var statusRaw = ci.status >= 0 ? String(row[ci.status]).trim().toLowerCase() : '';
+      if (!statusRaw && ci.confirmed >= 0) statusRaw = _truthy(row[ci.confirmed]) ? 'confermato' : '';
       var rec = {
-        leadKey:   ci.leadKey   >= 0 ? String(row[ci.leadKey]).trim()  : '',
-        telefono:  ci.telefono  >= 0 ? String(row[ci.telefono]).trim() : '',
-        nome:      ci.nome      >= 0 ? String(row[ci.nome]).trim()     : '',
-        codice:    ci.codice    >= 0 ? String(row[ci.codice]).trim()   : '',
-        confirmed: ci.confirmed >= 0 ? _truthy(row[ci.confirmed])      : false,
-        t0ISO:     ci.t0ISO     >= 0 ? String(row[ci.t0ISO]).trim()    : ''
+        leadKey:    ci.leadKey    >= 0 ? String(row[ci.leadKey]).trim()    : '',
+        telefono:   ci.telefono   >= 0 ? String(row[ci.telefono]).trim()   : '',
+        nome:       ci.nome       >= 0 ? String(row[ci.nome]).trim()       : '',
+        codice:     ci.codice     >= 0 ? String(row[ci.codice]).trim()     : '',
+        status:     statusRaw,
+        t0ISO:      ci.t0ISO      >= 0 ? String(row[ci.t0ISO]).trim()      : '',
+        createdISO: ci.createdISO >= 0 ? String(row[ci.createdISO]).trim() : ''
       };
       _rows.push(rec);
       var ph = _normPhone(rec.telefono);
@@ -96,12 +104,19 @@ var FunnelStore = (function () {
     return null;
   }
 
-  // true SOLO se il lead esiste nel foglio ed è confermato. Lead sconosciuto → false
-  // (non lo blocco: meglio una mail in più che perdere un sollecito; ma vedi nota scheduler).
-  function isConfirmed(telefono, leadKey) {
+  // v2.5.67: stato EFFETTIVO del lead. Lead sconosciuto o cella vuota → 'pending' (il cutoff lato
+  // scheduler protegge comunque i lead vecchi dall'invio retroattivo).
+  function getStatus(telefono, leadKey) {
     var rec = getLead(telefono, leadKey);
-    return !!(rec && rec.confirmed);
+    var s = rec && rec.status ? String(rec.status).trim().toLowerCase() : '';
+    return (s === 'confermato' || s === 'pending' || s === 'no') ? s : 'pending';
   }
 
-  return { load: load, getLead: getLead, isConfirmed: isConfirmed };
+  // v2.5.67: il funnel va FERMATO se lo stato è "confermato" o "no" (sostituisce isConfirmed).
+  function shouldStopFunnel(telefono, leadKey) {
+    var s = getStatus(telefono, leadKey);
+    return s === 'confermato' || s === 'no';
+  }
+
+  return { load: load, getLead: getLead, getStatus: getStatus, shouldStopFunnel: shouldStopFunnel };
 })();

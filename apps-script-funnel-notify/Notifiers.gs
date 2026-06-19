@@ -9,7 +9,8 @@
  * saltare i lead confermati e fare l'anti-duplicato per (notifier.id, eventId, stamp).
  * Quindi aggiungere un canale = aggiungere un oggetto a NOTIFIERS, senza duplicare logica.
  *
- * lead  = { nome, telefono, t0 (Date), eventTitle, eventLink, appLink, code, eventId }
+ * lead  = { nome, telefono, t0 (Date=creazione/ingresso), apptStart (Date=appuntamento),
+ *           eventTitle, eventLink, appLink, code, eventId }
  * stamp = { key, h, label }   (es. { key:'scrivere', h:2, label:'Scrivere al lead' })
  */
 
@@ -29,8 +30,9 @@ var EmailNotifier = {
     righe.push('');
     righe.push('👤 Lead: ' + (lead.nome || '(senza nome)'));
     if (lead.telefono) righe.push('📞 Telefono: ' + lead.telefono);
-    righe.push('🕒 Call originale (T0): ' + FunnelNotify_fmtDataIt(lead.t0));
-    righe.push('⏰ Stamp raggiunto: T+' + stamp.h + 'h — ' + stamp.label);
+    righe.push('🕒 Ingresso lead (creazione evento): ' + FunnelNotify_fmtDataIt(lead.t0));
+    if (lead.apptStart) righe.push('📅 Appuntamento (call): ' + FunnelNotify_fmtDataIt(lead.apptStart));
+    righe.push('⏰ Stamp raggiunto: T+' + stamp.h + 'h dall\'ingresso — ' + stamp.label);
     righe.push('');
     if (lead.eventLink) righe.push('📅 Evento calendario: ' + lead.eventLink);
     if (lead.appLink)   righe.push('📂 Scheda lead: ' + lead.appLink);

@@ -25,7 +25,12 @@ const DRIVE_FILES = {
     // PRIMA spunta di ogni step funnel. File affiancati in appDataFolder: leadChecklistState NON
     // cambia forma (zero migrazione). ATTENZIONE: il mapping DEVE esserci qui o save/load falliscono
     // in silenzio ("Key non valida") e il dato va perso al reload (stesso bug fixato in v2.5.59).
-    LEAD_CONFIRMED: 'testmess_lead_confirmed.json',           // { "<leadKey>": true }
+    LEAD_CONFIRMED: 'testmess_lead_confirmed.json',           // v2.5.61 (LEGACY): { "<leadKey>": true }. Tenuto solo per migrazione/rollback verso LEAD_STATUS.
+    // v2.5.67: stato conferma a TRE valori per lead: { "<leadKey>": "confermato"|"pending"|"no" }.
+    // Sostituisce il booleano LEAD_CONFIRMED. Vengono persisti SOLO gli stati scelti a mano: lo
+    // stato di default (no/pending in base al cutoff) NON si salva, così resta auto-correggente.
+    // Stesso bug noto: il mapping DEVE esserci qui o save/load falliscono in silenzio ("Key non valida").
+    LEAD_STATUS: 'testmess_lead_status.json',                 // { "<leadKey>": "confermato"|"pending"|"no" }
     LEAD_CHECKLIST_TIMES: 'testmess_lead_checklist_times.json', // { "<leadKey>": { "<step>": ISO } }
     // v2.5.64: codice ID lead alfanumerico stabile (L0001…) per il deep-link scheda da Calendar.
     // Stesso bug noto: il mapping DEVE esserci qui o save/load falliscono in silenzio ("Key non valida").

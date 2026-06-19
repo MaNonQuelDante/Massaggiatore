@@ -1,14 +1,19 @@
 /* ================================================================================
-   FUNNEL SHEET SYNC - TESTmess v2.5.66
+   FUNNEL SHEET SYNC - TESTmess v2.5.67
 
-   Rispecchia lo stato funnel dei lead (identità + flag "Confermato") in un Google
-   Sheet dedicato, così l'Apps Script "Funnel Notify" (che gira a browser chiuso) può
-   leggerlo. Lo stato primario resta su Drive appDataFolder (UI invariata): QUESTO è
+   Rispecchia lo stato funnel dei lead (identità + stato conferma + ingresso) in un
+   Google Sheet dedicato, così l'Apps Script "Funnel Notify" (che gira a browser chiuso)
+   può leggerlo. Lo stato primario resta su Drive appDataFolder (UI invariata): QUESTO è
    solo un mirror in scrittura, additivo. appDataFolder NON è leggibile da Apps Script
    (è per-applicazione) → serve questo ponte.
 
-   Foglio: tab CONFIG 'LEADS', intestazione:
-     leadKey | telefono | nome | codice | confirmed | t0ISO | updatedAt
+   Foglio: tab CONFIG 'LEADS', intestazione (v2.5.67):
+     leadKey | telefono | nome | codice | status | t0ISO | createdISO | updatedAt
+   - status     = "confermato" | "pending" | "no" (era il booleano "confirmed"). L'Apps
+                  Script manda mail SOLO se "pending".
+   - createdISO = data di CREAZIONE dell'evento "LEAD - Call" (ingresso reale). È il T0
+                  autorevole del funnel lato Apps Script (stamp T+2/4/6h dal createdISO).
+   - t0ISO      = orario APPUNTAMENTO (start evento), tenuto per retrocompatibilità.
 
    ID del foglio: window.APP_CONFIG.FUNNEL_SHEET_ID (in js/config.js). Se vuoto → no-op
    (feature spenta finché non lo configuri). Tutte le operazioni sono fire-and-forget:
@@ -17,8 +22,8 @@
 
 const FUNNEL_SHEET = {
     TAB: 'LEADS',
-    HEADER: ['leadKey', 'telefono', 'nome', 'codice', 'confirmed', 't0ISO', 'updatedAt'],
-    RANGE: 'A:G'
+    HEADER: ['leadKey', 'telefono', 'nome', 'codice', 'status', 't0ISO', 'createdISO', 'updatedAt'],
+    RANGE: 'A:H'
 };
 
 let _funnelSheetReady = false;   // tab + header garantiti (una volta per sessione)
@@ -83,17 +88,21 @@ async function _funnelEnsureTabAndHeader() {
     try {
         const head = await window.gapi.client.sheets.spreadsheets.values.get({
             spreadsheetId,
-            range: `${FUNNEL_SHEET.TAB}!A1:G1`
+            range: `${FUNNEL_SHEET.TAB}!A1:H1`
         });
-        const first = head.result && head.result.values && head.result.values[0] && head.result.values[0][0];
-        if (first !== 'leadKey') {
+        const row1 = (head.result && head.result.values && head.result.values[0]) || [];
+        const first = row1[0];
+        // v2.5.67: riscrivo l'header se manca (foglio nuovo) o se è ancora il vecchio schema a 7
+        // colonne (col E = "confirmed" invece di "status", senza createdISO). Idempotente.
+        const isNewSchema = first === 'leadKey' && String(row1[4]).trim().toLowerCase() === 'status';
+        if (!isNewSchema) {
             await window.gapi.client.sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `${FUNNEL_SHEET.TAB}!A1:G1`,
+                range: `${FUNNEL_SHEET.TAB}!A1:H1`,
                 valueInputOption: 'RAW',
                 resource: { values: [FUNNEL_SHEET.HEADER] }
             });
-            console.log('✅ [FunnelSheet] Intestazione scritta');
+            console.log('✅ [FunnelSheet] Intestazione (v2.5.67) scritta');
         }
     } catch (e) {
         console.warn('⚠️ [FunnelSheet] header fallito:', e);
@@ -104,15 +113,16 @@ async function _funnelEnsureTabAndHeader() {
     return true;
 }
 
-// Riga foglio (array A:G) da un leadRow normalizzato.
+// Riga foglio (array A:H) da un leadRow normalizzato. v2.5.67: status (stringa) + createdISO.
 function _funnelRowArray(lr) {
     return [
         lr.leadKey || '',
         lr.telefono || '',
         lr.nome || '',
         lr.codice || '',
-        lr.confirmed ? 'TRUE' : 'FALSE',
+        lr.status || 'pending',   // "confermato" | "pending" | "no" (default prudente: pending)
         lr.t0ISO || '',
+        lr.createdISO || '',
         new Date().toISOString()
     ];
 }
@@ -157,7 +167,7 @@ async function syncAllLeadsToFunnelSheet(leadRows) {
             if (!lr || !lr.leadKey) return;
             const arr = _funnelRowArray(lr);
             const row = keyRow[lr.leadKey];
-            if (row) updates.push({ range: `${FUNNEL_SHEET.TAB}!A${row}:G${row}`, values: [arr] });
+            if (row) updates.push({ range: `${FUNNEL_SHEET.TAB}!A${row}:H${row}`, values: [arr] });
             else appends.push(arr);
         });
 
@@ -197,7 +207,7 @@ async function upsertLeadToFunnelSheet(leadRow) {
         if (row) {
             await window.gapi.client.sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `${FUNNEL_SHEET.TAB}!A${row}:G${row}`,
+                range: `${FUNNEL_SHEET.TAB}!A${row}:H${row}`,
                 valueInputOption: 'RAW',
                 resource: { values: [arr] }
             });
@@ -210,7 +220,7 @@ async function upsertLeadToFunnelSheet(leadRow) {
                 resource: { values: [arr] }
             });
         }
-        console.log(`💾 [FunnelSheet] Upsert lead ${leadRow.leadKey} (confirmed=${!!leadRow.confirmed})`);
+        console.log(`💾 [FunnelSheet] Upsert lead ${leadRow.leadKey} (status=${leadRow.status || 'pending'})`);
     } catch (e) {
         console.warn('⚠️ [FunnelSheet] upsertLead fallito (ignoro):', e);
     }

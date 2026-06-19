@@ -15,7 +15,8 @@ const STORAGE_KEYS = {
     OPERATOR_NAME: 'OPERATOR_NAME',
     LEAD_CHECKLIST: 'LEAD_CHECKLIST', // v2.5.55: stato checkbox funnel-conferma per lead (cloud/Drive)
     LEAD_BINDINGS: 'LEAD_BINDINGS',   // v2.5.57: aggancio manuale lead↔evento "LEAD - Call" (cloud/Drive)
-    LEAD_CONFIRMED: 'LEAD_CONFIRMED',           // v2.5.61: flag "Appuntamento confermato" per lead (cloud/Drive)
+    LEAD_CONFIRMED: 'LEAD_CONFIRMED',           // v2.5.61 (LEGACY): flag booleano "Confermato". Tenuto solo per migrazione → LEAD_STATUS.
+    LEAD_STATUS: 'LEAD_STATUS',                  // v2.5.67: stato conferma a 3 valori per lead "confermato"|"pending"|"no" (cloud/Drive)
     LEAD_CHECKLIST_TIMES: 'LEAD_CHECKLIST_TIMES', // v2.5.61: timestamp congelato 1ª spunta step funnel (cloud/Drive)
     LEAD_CODES: 'LEAD_CODES',                     // v2.5.64: mappa _key→codice ID lead (cloud/Drive)
     LEAD_CODE_COUNTER: 'LEAD_CODE_COUNTER'        // v2.5.64: counter codici lead { next: <ultimo assegnato> }
@@ -1274,9 +1275,54 @@ const LEAD_CHECKLIST_STEPS = [
 // NB: il render NON scrive mai in cloud (come da pattern v2.5.54): si salva solo su azione utente.
 let leadChecklistState = {};
 
-// v2.5.61: flag "Appuntamento confermato" per lead. { "<leadKey>": true }. Quando true il funnel
-// viene congelato (step disabilitati ma visibili). File affiancato su Drive (LEAD_CONFIRMED).
-let leadConfirmedState = {};
+// v2.5.67: STATO conferma a 3 valori per lead. { "<leadKey>": "confermato"|"pending"|"no" }.
+// Sostituisce il booleano leadConfirmedState. REGOLA: qui dentro vivono SOLO gli stati scelti a
+// mano dall'utente (vincono sempre). Lo stato di DEFAULT (per i lead senza scelta manuale) NON è
+// persistito: viene calcolato al volo da getLeadStatus() in base al cutoff, così resta
+// auto-correggente. Funnel ATTIVO solo su "pending"; "confermato" e "no" lo congelano.
+let leadStatusState = {};
+
+// v2.5.67: i 3 stati ammessi (ordine UI: positivo → neutro → negativo).
+const LEAD_STATUSES = ['confermato', 'pending', 'no'];
+
+// v2.5.67: cutoff non-retroattivo (da js/config.js). I lead il cui evento "LEAD - Call" è stato
+// CREATO prima di questo istante partono "no" (funnel chiuso, niente mail); da qui in poi "pending".
+function funnelCutoffMs() {
+    const iso = (window.APP_CONFIG && window.APP_CONFIG.FUNNEL_CUTOFF_ISO) || '';
+    const t = iso ? new Date(iso).getTime() : NaN;
+    return isNaN(t) ? 0 : t; // cutoff assente/illeggibile → 0 = tutto è "dopo" (fail-open verso pending)
+}
+
+// v2.5.67: stato di DEFAULT di un lead senza scelta manuale, dato l'ISO di creazione del suo evento.
+//   createdISO assente            → "no"   (non posso dimostrare che sia nuovo → lo tratto da vecchio)
+//   createdISO < cutoff           → "no"   (lead vecchio: funnel chiuso, niente mail retroattive)
+//   createdISO >= cutoff          → "pending" (lead nuovo: funnel attivo)
+function defaultLeadStatus(createdISO) {
+    if (!createdISO) return 'no';
+    const c = new Date(createdISO).getTime();
+    if (isNaN(c)) return 'no';
+    return c < funnelCutoffMs() ? 'no' : 'pending';
+}
+
+// v2.5.67: ISO di creazione dell'evento agganciato a un lead (≈ ingresso reale). '' se non risolvibile.
+function getLeadCreatedISO(lead) {
+    try {
+        const res = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
+        return (res && res.createdAt) ? res.createdAt.toISOString() : '';
+    } catch (e) { return ''; }
+}
+
+// v2.5.67: stato EFFETTIVO di un lead = scelta manuale (se valida) altrimenti default da cutoff.
+function getLeadStatus(lead) {
+    const stored = leadStatusState[lead._key];
+    if (LEAD_STATUSES.includes(stored)) return stored;
+    return defaultLeadStatus(getLeadCreatedISO(lead));
+}
+
+// v2.5.67: il funnel è CONGELATO per tutti gli stati tranne "pending".
+function isLeadFunnelFrozen(status) {
+    return status !== 'pending';
+}
 
 // v2.5.61: timestamp CONGELATO della PRIMA volta che uno step funnel è stato spuntato.
 // { "<leadKey>": { "<step>": "ISO" } }. Mai sovrascritto, mai cancellato (resta anche se lo step
@@ -1284,7 +1330,7 @@ let leadConfirmedState = {};
 // migrazione) — i tempi vivono in questo file affiancato (LEAD_CHECKLIST_TIMES), che parte vuoto.
 let leadChecklistTimes = {};
 
-// v2.5.61: filtro della sezione Lead. 'all' | 'unconfirmed' | 'confirmed'. Solo in memoria,
+// v2.5.67: filtro della sezione Lead. 'all' | 'pending' | 'confermato' | 'no'. Solo in memoria,
 // NON persistito su Drive.
 let leadFilterMode = 'all';
 
@@ -1576,16 +1622,17 @@ function buildNoShowWaHref(lead, t0) {
 }
 
 // HTML del blocco checklist per una singola card lead. `resolution` = output di resolveLeadT0.
-function renderLeadChecklist(lead, resolution) {
+// v2.5.67: `leadStatus` = stato conferma a 3 valori (confermato|pending|no), già calcolato dal chiamante.
+function renderLeadChecklist(lead, resolution, leadStatus) {
     const leadKey = lead._key;
     const state = leadChecklistState[leadKey] || {};
     const keyAttr = encodeURIComponent(leadKey); // sicuro come valore di data-attribute
     const t0 = resolution.t0;
     const status = resolution.status;
 
-    // v2.5.61: lead confermato → funnel congelato. Gli step successivi all'ingresso vengono
-    // mostrati disabilitati ma visibili (l'utente li vede ancora, ma non sono più azionabili).
-    const confirmed = !!leadConfirmedState[leadKey];
+    // v2.5.67: funnel congelato per tutti gli stati tranne "pending" (Confermato e No lo chiudono).
+    // Gli step successivi all'ingresso restano visibili ma disabilitati.
+    const frozenFunnel = isLeadFunnelFrozen(leadStatus);
 
     // v2.5.59: messaggio precompilato per il bottone WhatsApp della riga "noshow"
     const noshowWaHref = buildNoShowWaHref(lead, t0);
@@ -1594,8 +1641,8 @@ function renderLeadChecklist(lead, resolution) {
     let rows = '';
     LEAD_CHECKLIST_STEPS.forEach(step => {
         const checked = (state[step.key] !== undefined) ? state[step.key] : (step.defaultChecked || false);
-        // v2.5.61: congelati tutti gli step tranne "ingresso" quando il lead è confermato.
-        const frozen = confirmed && step.key !== 'ingresso';
+        // v2.5.67: congelati tutti gli step tranne "ingresso" quando il funnel è congelato (≠ pending).
+        const frozen = frozenFunnel && step.key !== 'ingresso';
         let timeHtml = '';
         if (step.offsetH !== null) {
             const t = leadStepTime(t0, step.offsetH);
@@ -1609,9 +1656,9 @@ function renderLeadChecklist(lead, resolution) {
                     </label>`;
         // v2.5.59: sulla riga "noshow" affianco un bottone WhatsApp verso il Gruppo NoShow.
         // È un <a> FUORI dalla <label> (sibling) così il click non spunta la casella.
-        // v2.5.61: a lead confermato il bottone NoShow è nascosto (azione non più necessaria).
+        // v2.5.67: a funnel congelato (≠ pending) il bottone NoShow è nascosto (azione non più necessaria).
         if (step.key === 'noshow') {
-            const waBtn = confirmed ? '' : `<a class="lead-wa-btn lead-noshow-wa" href="${noshowWaHref}" target="_blank" rel="noopener" title="Inoltra al Gruppo NoShow"><i class="fab fa-whatsapp"></i></a>`;
+            const waBtn = frozenFunnel ? '' : `<a class="lead-wa-btn lead-noshow-wa" href="${noshowWaHref}" target="_blank" rel="noopener" title="Inoltra al Gruppo NoShow"><i class="fab fa-whatsapp"></i></a>`;
             rows += `
                     <div class="lead-check-noshow">
                         ${rowHtml}
@@ -1623,17 +1670,18 @@ function renderLeadChecklist(lead, resolution) {
     });
 
     // Etichetta di stato accanto al titolo
-    // v2.5.61: se confermato, il tag verde "Appuntamento confermato" sostituisce gli altri.
+    // v2.5.67: a funnel congelato il tag dello stato (Confermato verde / No grigio) sostituisce gli altri.
     let tag = '';
-    if (confirmed) tag = `<span class="lead-checklist-tag lead-tag-confirmed" title="Appuntamento confermato — funnel congelato">✅ Appuntamento confermato</span>`;
+    if (leadStatus === 'confermato') tag = `<span class="lead-checklist-tag lead-tag-confirmed" title="Appuntamento confermato — funnel congelato">✅ Appuntamento confermato</span>`;
+    else if (leadStatus === 'no') tag = `<span class="lead-checklist-tag lead-tag-no" title="Lead non confermato — funnel chiuso, niente mail">✖️ Non confermato</span>`;
     else if (status === 'manual') tag = `<span class="lead-checklist-tag" title="Orario impostato a mano">📌 manuale</span>`;
     else if (status === 'bound') tag = `<span class="lead-checklist-tag" title="Agganciato a mano a un evento">📌 agganciato</span>`;
     else if (status === 'none') tag = `<span class="lead-checklist-hint" title="Nessun evento 'LEAD - Call' agganciato a questo lead">T0 n/d</span>`;
 
     // Banner di proposta (caso incerto): chiede conferma all'utente
-    // v2.5.61: soppresso a lead confermato (non ha senso proporre agganci sul funnel congelato).
+    // v2.5.67: soppresso a funnel congelato (non ha senso proporre agganci su un funnel chiuso).
     let banner = '';
-    if (!confirmed && status === 'suggest' && resolution.suggestion) {
+    if (!frozenFunnel && status === 'suggest' && resolution.suggestion) {
         const s = resolution.suggestion;
         const idAttr = encodeURIComponent(s.id || '');
         banner = `
@@ -1728,28 +1776,29 @@ async function toggleLeadChecklistStep(leadKey, step, checked) {
 }
 window.toggleLeadChecklistStep = toggleLeadChecklistStep;
 
-// v2.5.61: toggle del flag "Appuntamento confermato". Set/delete in memoria, salva su Drive
-// (stesso pattern della checklist), poi re-render. La checkbox resta sempre interattiva (anche
-// da confermato, per poter annullare).
-async function toggleLeadConfirmed(leadKey, checked) {
-    if (checked) leadConfirmedState[leadKey] = true;
-    else delete leadConfirmedState[leadKey];
+// v2.5.67: imposta lo STATO conferma del lead (confermato|pending|no). È SEMPRE una scelta manuale:
+// la scrivo in leadStatusState (vince sul default), salvo su Drive (stesso pattern della checklist),
+// poi re-render. Solo "pending" tiene il funnel attivo; gli altri due lo congelano.
+async function setLeadStatus(leadKey, status) {
+    if (!LEAD_STATUSES.includes(status)) return;
+    if (leadStatusState[leadKey] === status) return; // no-op se invariato (niente re-render/scrittura)
+    leadStatusState[leadKey] = status;
 
     renderLeadList();
 
     if (window.DriveStorage && window.accessToken) {
         try {
-            await window.DriveStorage.save(STORAGE_KEYS.LEAD_CONFIRMED, leadConfirmedState);
-            console.log(`💾 [Lead] Conferma salvata (${leadKey} = ${checked})`);
+            await window.DriveStorage.save(STORAGE_KEYS.LEAD_STATUS, leadStatusState);
+            console.log(`💾 [Lead] Stato salvato (${leadKey} = ${status})`);
         } catch (e) {
-            console.error('❌ [Lead] Salvataggio conferma fallito:', e);
+            console.error('❌ [Lead] Salvataggio stato fallito:', e);
         }
     } else {
-        console.warn('⚠️ [Lead] Non loggato: conferma non salvata su cloud.');
+        console.warn('⚠️ [Lead] Non loggato: stato non salvato su cloud.');
     }
 
-    // v2.5.66: rifletti SUBITO la conferma nel Google Sheet → l'Apps Script email ferma/riattiva
-    // il funnel per questo lead. leadConfirmedState è già aggiornato qui sopra. Fire-and-forget.
+    // v2.5.66/67: rifletti SUBITO lo stato nel Google Sheet → l'Apps Script email ferma/riattiva il
+    // funnel per questo lead (mail solo se "pending"). leadStatusState è già aggiornato. Fire-and-forget.
     if (window.FunnelSheetSync && window.FunnelSheetSync.upsertLead) {
         const lead = (leadSectionLeads || []).find(l => l._key === leadKey);
         if (lead) {
@@ -1758,7 +1807,7 @@ async function toggleLeadConfirmed(leadKey, checked) {
         }
     }
 }
-window.toggleLeadConfirmed = toggleLeadConfirmed;
+window.setLeadStatus = setLeadStatus;
 
 // Persiste gli agganci manuali su Drive (stesso meccanismo dei dati lead).
 async function saveLeadBindings() {
@@ -1832,13 +1881,6 @@ function ensureLeadDelegation(listContainer) {
     listContainer._leadDelegationAttached = true;
 
     listContainer.addEventListener('change', (e) => {
-        // v2.5.61: flag "Appuntamento confermato" (checkbox nell'header della card)
-        const confirmCb = e.target.closest && e.target.closest('input[data-lead-confirm]');
-        if (confirmCb) {
-            const leadKey = decodeURIComponent(confirmCb.dataset.leadKey);
-            toggleLeadConfirmed(leadKey, confirmCb.checked);
-            return;
-        }
         const cb = e.target.closest && e.target.closest('.lead-check-row input[type="checkbox"]');
         if (!cb) return;
         const leadKey = decodeURIComponent(cb.dataset.leadKey);
@@ -1848,6 +1890,13 @@ function ensureLeadDelegation(listContainer) {
     });
 
     listContainer.addEventListener('click', (e) => {
+        // v2.5.67: controllo a 3 stati (Confermato / Pending / No) nell'header della card.
+        const statusBtn = e.target.closest && e.target.closest('[data-lead-status]');
+        if (statusBtn && listContainer.contains(statusBtn)) {
+            const leadKey = decodeURIComponent(statusBtn.dataset.leadKey);
+            setLeadStatus(leadKey, statusBtn.dataset.leadStatus);
+            return;
+        }
         const btn = e.target.closest && e.target.closest('[data-lead-action]');
         if (btn && listContainer.contains(btn)) handleLeadAction(btn);
     });
@@ -1911,14 +1960,36 @@ async function loadLeadSection() {
         }
     }
 
-    // v2.5.61: flag "Appuntamento confermato" (cloud/Drive). Stesso pattern: il render non scrive mai.
-    leadConfirmedState = {};
+    // v2.5.67: STATO conferma a 3 valori (cloud/Drive). Stesso pattern: il render non scrive mai
+    // (a parte la migrazione una-tantum qui sotto). Vengono caricati SOLO gli stati scelti a mano:
+    // il default (no/pending da cutoff) lo calcola getLeadStatus() al volo, mai persistito.
+    leadStatusState = {};
     if (window.DriveStorage) {
         try {
-            const savedC = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CONFIRMED);
-            if (savedC && typeof savedC === 'object') leadConfirmedState = savedC;
+            const savedS = await window.DriveStorage.load(STORAGE_KEYS.LEAD_STATUS);
+            if (savedS && typeof savedS === 'object') {
+                leadStatusState = savedS;
+            } else {
+                // MIGRAZIONE una-tantum: il file LEAD_STATUS non esiste ancora → costruiscilo dal
+                // vecchio booleano LEAD_CONFIRMED ({key:true} → "confermato"). I lead non confermati
+                // a mano NON entrano qui: prenderanno il default (no/pending) da getLeadStatus().
+                // Il file LEGACY non viene cancellato (rollback). Persisto LEAD_STATUS così la
+                // migrazione non si ripete (la sua sola esistenza è la sentinella).
+                const oldConfirmed = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CONFIRMED);
+                if (oldConfirmed && typeof oldConfirmed === 'object') {
+                    Object.keys(oldConfirmed).forEach(k => { if (oldConfirmed[k]) leadStatusState[k] = 'confermato'; });
+                }
+                if (window.accessToken) {
+                    try {
+                        await window.DriveStorage.save(STORAGE_KEYS.LEAD_STATUS, leadStatusState);
+                        console.log(`🔄 [v2.5.67] Migrazione LEAD_CONFIRMED → LEAD_STATUS (${Object.keys(leadStatusState).length} confermati a mano)`);
+                    } catch (e) {
+                        console.warn('⚠️ [v2.5.67] Salvataggio migrazione stato lead fallito (riproverà):', e);
+                    }
+                }
+            }
         } catch (error) {
-            console.error('❌ Errore caricamento conferme lead:', error);
+            console.error('❌ Errore caricamento stato lead:', error);
         }
     }
 
@@ -2028,50 +2099,58 @@ async function loadLeadSection() {
     }
 }
 
-// v2.5.66: riga-mirror di un lead per il Google Sheet del funnel (vedi funnel-sheet-sync.js).
-// { leadKey, telefono, nome, codice, confirmed, t0ISO }. t0 best-effort (l'Apps Script usa
-// comunque l'orario dell'evento Calendar come T0 autorevole).
+// v2.5.66/67: riga-mirror di un lead per il Google Sheet del funnel (vedi funnel-sheet-sync.js).
+// { leadKey, telefono, nome, codice, status, t0ISO, createdISO }.
+// - status     = stato EFFETTIVO (manuale o default da cutoff): l'Apps Script manda mail SOLO se "pending".
+// - createdISO = v2.5.67: data di CREAZIONE dell'evento "LEAD - Call" (ingresso reale). È il T0
+//                autorevole per il funnel lato Apps Script (stamp T+2/4/6h dal createdISO).
+// - t0ISO      = orario APPUNTAMENTO (start evento), tenuto per retrocompatibilità/diagnostica.
 function buildFunnelLeadRow(lead) {
     let t0ISO = '';
+    let createdISO = '';
     try {
         const res = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
         if (res && res.t0) t0ISO = res.t0.toISOString();
+        if (res && res.createdAt) createdISO = res.createdAt.toISOString();
     } catch (e) { /* best-effort */ }
     return {
         leadKey: lead._key,
         telefono: lead.telefono || '',
         nome: (`${lead.nome || ''} ${lead.cognome || ''}`).trim(),
         codice: leadCodes[lead._key] || '',
-        confirmed: !!leadConfirmedState[lead._key],
-        t0ISO: t0ISO
+        status: getLeadStatus(lead),
+        t0ISO: t0ISO,
+        createdISO: createdISO
     };
 }
 window.buildFunnelLeadRow = buildFunnelLeadRow;
 
-// v2.5.61: barra in cima alla sezione Lead — contatore live confermati/non confermati + filtro.
-// I conteggi vengono da leadSectionLeads + leadConfirmedState (lead correnti in memoria). Il filtro
+// v2.5.67: barra in cima alla sezione Lead — contatore live per i 3 stati + filtro.
+// `statusByKey` = mappa _key→stato effettivo (calcolata una volta in renderLeadList). Il filtro
 // (leadFilterMode) NON è persistito. La delega click è agganciata una sola volta sul contenitore.
-function renderLeadFilterBar() {
+function renderLeadFilterBar(statusByKey) {
     const bar = document.getElementById('leadFilterBar');
     if (!bar) return;
 
-    const total = leadSectionLeads.length;
-    const confirmedCount = leadSectionLeads.filter(l => leadConfirmedState[l._key]).length;
-    const unconfirmedCount = total - confirmedCount;
+    const counts = { confermato: 0, pending: 0, no: 0 };
+    leadSectionLeads.forEach(l => { const s = statusByKey[l._key]; if (counts[s] !== undefined) counts[s]++; });
 
     const btn = (mode, label) =>
         `<button type="button" class="lead-filter-btn${leadFilterMode === mode ? ' active' : ''}" data-lead-filter="${mode}">${label}</button>`;
 
     bar.innerHTML = `
         <div class="lead-filter-counts">
-            <span class="lead-filter-count-unconf">🟡 ${unconfirmedCount} non confermati</span>
+            <span class="lead-filter-count-pending">🕒 ${counts.pending} pending</span>
             <span class="lead-filter-sep">·</span>
-            <span class="lead-filter-count-conf">✅ ${confirmedCount} confermati</span>
+            <span class="lead-filter-count-conf">✅ ${counts.confermato} confermati</span>
+            <span class="lead-filter-sep">·</span>
+            <span class="lead-filter-count-no">✖️ ${counts.no} no</span>
         </div>
         <div class="lead-filter-btns">
             ${btn('all', 'Tutti')}
-            ${btn('unconfirmed', 'Non confermati')}
-            ${btn('confirmed', 'Confermati')}
+            ${btn('pending', 'Pending')}
+            ${btn('confermato', 'Confermati')}
+            ${btn('no', 'No')}
         </div>`;
 
     if (!bar._leadFilterDelegationAttached) {
@@ -2091,13 +2170,19 @@ function renderLeadList() {
     const listContainer = document.getElementById('leadList');
     if (!listContainer) return;
 
-    // v2.5.61: barra contatore + filtro in cima alla sezione.
-    renderLeadFilterBar();
+    // v2.5.67: stato effettivo di ogni lead calcolato UNA volta (manuale o default da cutoff),
+    // riusato da barra/filtro/card per non chiamare resolveLeadT0 più volte per lead.
+    const statusByKey = {};
+    leadSectionLeads.forEach(l => { statusByKey[l._key] = getLeadStatus(l); });
 
-    // v2.5.61: applica il filtro confermati/non confermati PRIMA di generare l'HTML.
+    // v2.5.67: barra contatore (3 stati) + filtro in cima alla sezione.
+    renderLeadFilterBar(statusByKey);
+
+    // v2.5.67: applica il filtro per stato PRIMA di generare l'HTML ('all' = nessun filtro).
     let leadsToShow = leadSectionLeads;
-    if (leadFilterMode === 'confirmed') leadsToShow = leadSectionLeads.filter(l => leadConfirmedState[l._key]);
-    else if (leadFilterMode === 'unconfirmed') leadsToShow = leadSectionLeads.filter(l => !leadConfirmedState[l._key]);
+    if (leadFilterMode === 'pending' || leadFilterMode === 'confermato' || leadFilterMode === 'no') {
+        leadsToShow = leadSectionLeads.filter(l => statusByKey[l._key] === leadFilterMode);
+    }
 
     // Etichette leggibili per i tipi messaggio (id template); fallback per tipi sconosciuti
     const tipoLabels = {
@@ -2129,7 +2214,7 @@ function renderLeadList() {
         const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '—'; // v2.5.59: +39 339 486 5982
         const count = lead.messaggi.length;
         const keyAttr = encodeURIComponent(lead._key);
-        const confirmed = !!leadConfirmedState[lead._key];
+        const leadStatus = statusByKey[lead._key]; // v2.5.67: stato conferma effettivo (confermato|pending|no)
         // v2.5.64: codice ID lead (deep-link da Calendar). Esposto sulla card come badge + attributo.
         const leadCode = leadCodes[lead._key] || '';
         lead._code = leadCode || null;
@@ -2213,7 +2298,18 @@ function renderLeadList() {
         entries.sort((a, b) => a.sortTs - b.sortTs);
         const azioniHtml = entries.map(e => e.html).join('');
 
-        const checklistHtml = renderLeadChecklist(lead, resolution);
+        const checklistHtml = renderLeadChecklist(lead, resolution, leadStatus);
+
+        // v2.5.67: controllo a 3 stati (Confermato / Pending / No) al posto della vecchia checkbox.
+        // Solo "Pending" tiene il funnel attivo (e fa partire le mail); Confermato e No lo congelano.
+        const statusBtn = (val, icon, label) =>
+            `<button type="button" class="lead-status-btn lead-status-${val}${leadStatus === val ? ' active' : ''}" data-lead-status="${val}" data-lead-key="${keyAttr}" aria-pressed="${leadStatus === val}">${icon} ${label}</button>`;
+        const statusControlHtml = `
+                <div class="lead-status-control" role="group" aria-label="Stato conferma lead">
+                    ${statusBtn('confermato', '✅', 'Confermato')}
+                    ${statusBtn('pending', '🕒', 'Pending')}
+                    ${statusBtn('no', '✖️', 'No')}
+                </div>`;
 
         // v2.5.63: giorno+ora dell'APPUNTAMENTO accanto al nome (t0 = start evento "LEAD - Call"
         // o orario a mano). Distinto dall'"ingresso" nel log, che usa lo stamp di creazione.
@@ -2231,10 +2327,7 @@ function renderLeadList() {
                         ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
                     </span>
                 </div>
-                <label class="lead-confirm-toggle${confirmed ? ' is-confirmed' : ''}">
-                    <input type="checkbox" data-lead-confirm data-lead-key="${keyAttr}"${confirmed ? ' checked' : ''}>
-                    <span><i class="fas fa-circle-check"></i> Appuntamento confermato</span>
-                </label>
+                ${statusControlHtml}
                 ${checklistHtml}
                 <div class="lead-azioni">
                     ${azioniHtml}
