@@ -23,16 +23,24 @@ var EmailNotifier = {
   },
 
   send: function (lead, stamp) {
-    var oggetto = '[Massaggiatore] Stamp T+' + stamp.h + 'h · ' + (lead.nome || 'Lead');
+    // v2.5.72: lo stamp 'ingresso' (h=0) è la mail "nuovo lead entrato" → copia dedicata.
+    var isIngresso = stamp.key === 'ingresso';
+    var oggetto = isIngresso
+      ? '[Massaggiatore] 🆕 Nuovo lead entrato · ' + (lead.nome || 'Lead')
+      : '[Massaggiatore] Stamp T+' + stamp.h + 'h · ' + (lead.nome || 'Lead');
 
     var righe = [];
-    righe.push('È scaduto uno stamp del funnel per questo lead.');
+    righe.push(isIngresso
+      ? 'È entrato un nuovo lead (evento creato in calendario).'
+      : 'È scaduto uno stamp del funnel per questo lead.');
     righe.push('');
     righe.push('👤 Lead: ' + (lead.nome || '(senza nome)'));
     if (lead.telefono) righe.push('📞 Telefono: ' + lead.telefono);
     righe.push('🕒 Ingresso lead (creazione evento): ' + FunnelNotify_fmtDataIt(lead.t0));
     if (lead.apptStart) righe.push('📅 Appuntamento (call): ' + FunnelNotify_fmtDataIt(lead.apptStart));
-    righe.push('⏰ Stamp raggiunto: T+' + stamp.h + 'h dall\'ingresso — ' + stamp.label);
+    righe.push(isIngresso
+      ? '🆕 Ingresso lead registrato (T0).'
+      : '⏰ Stamp raggiunto: T+' + stamp.h + 'h dall\'ingresso — ' + stamp.label);
     righe.push('');
     if (lead.eventLink) righe.push('📅 Evento calendario: ' + lead.eventLink);
     if (lead.appLink)   righe.push('📂 Scheda lead: ' + lead.appLink);

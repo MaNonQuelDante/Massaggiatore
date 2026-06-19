@@ -9,6 +9,14 @@
  *
  * SEPARATO dall'Apps Script Twilio (apps-script-reminder/): quello NON si tocca.
  *
+ * CHANGELOG v1.2.0 (TESTmess v2.5.72):
+ * - 🆕 Stamp di INGRESSO (h=0): appena il lead entra (evento creato) parte la mail "nuovo lead
+ *      entrato". Soggetto a TOLLERANZA_MS come gli altri stamp (eventi creati da >3h → marcati
+ *      senza inviare, niente raffica di ingressi arretrati).
+ * - 📅 FOLLOWUP: il funnel ora vale anche per il calendario "FOLLOWUP" (oltre a "LEAD - Call").
+ *      Match calendario/titolo centralizzato in CONFIG.CAL_MATCHES + funnelCalMatches_/funnelTitleMatches_.
+ * - ⚠️ Richiede REDEPLOY manuale di questo Apps Script (copia i .gs aggiornati nell'editor).
+ *
  * CHANGELOG v1.1.0 (TESTmess v2.5.67):
  * - 🕒 T0 del funnel = data di CREAZIONE dell'evento "LEAD - Call" (ingresso reale del lead),
  *      NON più l'orario di inizio appuntamento. Stamp T+2/4/6h dal createdISO.
@@ -48,13 +56,23 @@ var CONFIG = {
 
   // v2.5.67: stamp del funnel da notificare. Soglie da T0 = CREAZIONE evento (ingresso), NON
   // cumulative. Allineate a LEAD_CHECKLIST_STEPS del front-end (scrivere=2h, sollecitare=4h, chiamata=6h).
+  // v2.5.72: aggiunto lo stamp di INGRESSO (h=0): appena il lead entra (evento creato) parte la mail
+  // "nuovo lead entrato". Gli altri restano soglie da T0=creazione (NON cumulative). Lo stamp ingresso,
+  // come gli altri, è soggetto a TOLLERANZA_MS: per eventi creati da >3h viene marcato senza inviare
+  // (niente raffica di "ingressi" arretrati al primo giro dello scheduler).
   SOGLIE: [
+    { key: 'ingresso',    h: 0, label: 'Ingresso lead' },
     { key: 'scrivere',    h: 2, label: 'Scrivere al lead' },
     { key: 'sollecitare', h: 4, label: 'Sollecitare il lead' },
     { key: 'chiamata',    h: 6, label: 'Sollecitare via chiamata' }
   ],
 
-  // Match evento: titolo == 'lead - call' (case-insensitive) o nome calendario lo contiene.
+  // Match evento: l'evento è "del funnel" se il NOME del calendario contiene una delle CAL_MATCHES,
+  // oppure se il TITOLO dell'evento è esattamente TITLE_MATCH (convenzione legacy sul titolo).
+  // v2.5.72: oltre a "LEAD - Call" rientra anche "FOLLOWUP" (i due calendari che contengono lead).
+  CAL_MATCHES: ['lead - call', 'followup', 'follow up', 'follow-up'],
+  TITLE_MATCH: 'lead - call',
+  // Retrocompat: log/funzioni che usano ancora CONFIG.CAL_MATCH (= prima voce di CAL_MATCHES).
   CAL_MATCH: 'lead - call',
 
   // Stesse tolleranze del Twilio: niente raffiche di arretrati, finestra di lettura, pulizia.

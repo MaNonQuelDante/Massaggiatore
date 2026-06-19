@@ -1426,13 +1426,26 @@ function nameTypoTolerance(len) {
     return 2;
 }
 
-// Costruisce la lista dei candidati dagli eventi "LEAD - Call" già sincronizzati in
-// localStorage (sgmess_calendar_events, popolato da syncCalendarEvents). "LEAD - Call" è
-// riconosciuto SIA come TITOLO evento SIA come NOME del CALENDARIO: così il match regge
-// qualunque sia la convenzione usata su Google Calendar. Per ogni candidato salviamo
-// telefono (ultime 9 cifre, dalla descrizione → NON cambia rinominando l'evento), nome
-// normalizzato e T0 (inizio). Riusa gli helper esistenti (extractPhoneFromEvent /
-// extractNameFromEvent / parseNameSurname). Eventi all-day scartati: niente orario → niente T0.
+// v2.5.72: un evento appartiene al funnel-lead se sta in un calendario "LEAD - Call" o "FOLLOWUP"
+// (match sul NOME del calendario, tollerante alle varianti follow up/follow-up) oppure se è titolato
+// esattamente "lead - call" (convenzione legacy sul titolo). Solo questi due calendari hanno lead.
+function isLeadFunnelEvent(event) {
+    if (!event) return false;
+    const cal = (event.calendarName || '').toLowerCase();
+    const title = (event.summary || '').trim().toLowerCase();
+    const inLeadCal =
+        cal.includes('lead - call') ||
+        cal.includes('followup') || cal.includes('follow up') || cal.includes('follow-up');
+    return inLeadCal || title === 'lead - call';
+}
+
+// Costruisce la lista dei candidati dagli eventi del funnel-lead ("LEAD - Call"/"FOLLOWUP") già
+// sincronizzati in localStorage (sgmess_calendar_events, popolato da syncCalendarEvents). Il match
+// (vedi isLeadFunnelEvent) regge SIA sul TITOLO evento SIA sul NOME del CALENDARIO, qualunque sia la
+// convenzione usata su Google Calendar. Per ogni candidato salviamo telefono (raw +39… e ultime 9
+// cifre, dalla descrizione → NON cambia rinominando l'evento), nome/cognome + nome normalizzato e T0
+// (inizio). Riusa gli helper esistenti (extractPhoneFromEvent / extractNameFromEvent /
+// parseNameSurname). Eventi all-day scartati: niente orario → niente T0.
 function buildLeadCallIndex() {
     const candidates = [];
     let events = [];
@@ -1445,10 +1458,8 @@ function buildLeadCallIndex() {
 
     events.forEach(event => {
         if (!event) return;
-        const isLeadCall =
-            (event.summary && event.summary.trim().toLowerCase() === 'lead - call') ||
-            (event.calendarName && event.calendarName.trim().toLowerCase() === 'lead - call');
-        if (!isLeadCall) return;
+        // v2.5.72: il funnel-lead vive nei calendari "LEAD - Call" E "FOLLOWUP" (prima solo LEAD - Call).
+        if (!isLeadFunnelEvent(event)) return;
 
         // T0 = orario di INIZIO. Serve un orario reale: scarta gli all-day (start senza 'T').
         const startStr = event.start || '';
@@ -1456,7 +1467,8 @@ function buildLeadCallIndex() {
         const t0 = new Date(startStr);
         if (isNaN(t0.getTime())) return;
 
-        const phone9 = leadPhone9(extractPhoneFromEvent(event));
+        const phoneRaw = extractPhoneFromEvent(event);   // v2.5.72: +39… (serve a materializzare la scheda)
+        const phone9 = leadPhone9(phoneRaw);
         const displayName = extractNameFromEvent(event);
         const parsed = parseNameSurname(displayName);
         const nameNorm = normalizeName(parsed.firstName + ' ' + parsed.lastName);
@@ -1468,10 +1480,39 @@ function buildLeadCallIndex() {
         const created = event.created ? new Date(event.created) : null;
         const createdValid = (created && !isNaN(created.getTime())) ? created : null;
 
-        candidates.push({ id: event.id || '', phone9, nameNorm, nameDisplay, t0, created: createdValid });
+        // v2.5.72: phoneRaw + firstName/lastName servono a buildCalendarLeads per creare la scheda del
+        // lead anche prima del primo messaggio (identità con la stessa leadIdentityKey della cronologia).
+        candidates.push({
+            id: event.id || '', phone9, phoneRaw,
+            firstName: parsed.firstName || '', lastName: parsed.lastName || '',
+            nameNorm, nameDisplay, t0, created: createdValid
+        });
     });
 
     return { candidates };
+}
+
+// v2.5.72: dai candidati-evento ("LEAD - Call"/"FOLLOWUP") deriva l'anagrafica dei lead da
+// MATERIALIZZARE come scheda anche senza messaggi. Dedup per leadIdentityKey (LA STESSA chiave della
+// cronologia → niente doppioni col lead poi messaggiato). A parità di chiave tiene l'anagrafica
+// dell'evento col T0 più recente (l'appuntamento "attuale"). Ritorna [{ _key, nome, cognome, telefono }].
+function buildCalendarLeads(candidates) {
+    const byKey = {};
+    (candidates || []).forEach(c => {
+        const key = leadIdentityKey(c.phoneRaw, c.firstName, c.lastName);
+        if (!key || key === 'nome:|') return; // né telefono né nome → nessuna identità, scarto
+        const prev = byKey[key];
+        if (!prev || (c.t0 && (!prev._t0 || c.t0 > prev._t0))) {
+            byKey[key] = {
+                _key: key,
+                nome: c.firstName || '',
+                cognome: c.lastName || '',
+                telefono: c.phoneRaw || '',
+                _t0: c.t0 || null
+            };
+        }
+    });
+    return Object.values(byKey).map(({ _t0, ...lead }) => lead);
 }
 
 // T0 AUTOMATICO per un lead. Dal più sicuro al più tollerante:
@@ -1948,10 +1989,10 @@ async function loadLeadSection() {
         }
     }
 
-    if (cronologia.length === 0) {
-        listContainer.innerHTML = '<p class="placeholder-text">Nessun lead contattato ancora...</p>';
-        return;
-    }
+    // v2.5.72: NON usciamo più se la cronologia è vuota. Le schede lead possono nascere anche dai
+    // SOLI eventi di calendario ("LEAD - Call"/"FOLLOWUP"), prima di qualunque messaggio: il caso
+    // "davvero nessun lead" lo gestiamo DOPO il merge calendario↔cronologia (vedi più sotto).
+    // Carico comunque checklist/stato/codici da Drive perché servono anche ai lead-da-calendario.
 
     // v2.5.55: stato checkbox del funnel-conferma (cloud/Drive). Il render NON scrive mai in
     // cloud (distingue loading da vuoto): se manca, le checkbox usano i default (vedi STEPS).
@@ -2061,14 +2102,50 @@ async function loadLeadSection() {
         lead.messaggi.push(entry);
     });
 
+    // v2.5.72: MERGE lead-da-calendario. Oltre ai lead già messaggiati (cronologia), mostriamo come
+    // scheda ANCHE i lead che hanno solo un evento nei calendari "LEAD - Call"/"FOLLOWUP" e a cui non
+    // abbiamo ancora scritto → la sezione Lead diventa coerente con la tendina (un lead in calendario
+    // compare subito, col suo stato) e il funnel/conferma può partire da subito. Identità con la STESSA
+    // leadIdentityKey della cronologia: se il lead è già presente (perché poi gli abbiamo scritto) i
+    // due si fondono, niente doppioni. L'anagrafica dell'evento riempie SOLO i campi mancanti (i dati
+    // della cronologia, scritti a mano, hanno priorità). Lead senza messaggi → messaggi:[] (0 azioni).
+    buildCalendarLeads(leadSectionCandidates).forEach(cl => {
+        if (!leadsMap[cl._key]) {
+            leadsMap[cl._key] = { _key: cl._key, nome: '', cognome: '', telefono: '', messaggi: [] };
+        }
+        const lead = leadsMap[cl._key];
+        if (!lead.nome && cl.nome) lead.nome = cl.nome;
+        if (!lead.cognome && cl.cognome) lead.cognome = cl.cognome;
+        if (!lead.telefono && cl.telefono) lead.telefono = cl.telefono;
+    });
+
     // Ordina: messaggi dal più vecchio al più recente; ultimo contatto per ordinare i lead
     const leads = Object.values(leadsMap);
+
+    // v2.5.72: ora che cronologia e calendario sono fusi, se NON c'è davvero nessun lead esco qui.
+    if (leads.length === 0) {
+        listContainer.innerHTML = '<p class="placeholder-text">Nessun lead ancora: aggiungi un evento "LEAD - Call"/"FOLLOWUP" oppure invia un primo messaggio.</p>';
+        return;
+    }
     leads.forEach(lead => {
         lead.messaggi.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
         const ultimo = lead.messaggi[lead.messaggi.length - 1];
-        lead.ultimoContatto = ultimo ? new Date(ultimo.timestamp).getTime() : 0;
+        if (ultimo) {
+            lead.ultimoContatto = new Date(ultimo.timestamp).getTime();
+        } else {
+            // v2.5.72: lead-da-calendario senza messaggi → ordino per recency dell'evento (ingresso/
+            // appuntamento) invece di lasciarlo a 0 (in fondo). Così i lead nuovi appena entrati in
+            // calendario sono subito visibili in cima, "mano a mano che vengono aggiunti".
+            let ts = 0;
+            try {
+                const r = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
+                const d = (r && (r.createdAt || r.t0)) || null;
+                if (d && !isNaN(d.getTime())) ts = d.getTime();
+            } catch (e) { /* best-effort */ }
+            lead.ultimoContatto = ts;
+        }
     });
-    // Lead dal contatto più recente al più vecchio
+    // Lead dal contatto/evento più recente al più vecchio
     leads.sort((a, b) => b.ultimoContatto - a.ultimoContatto);
 
     // v2.5.64: backfill codici per lead storici (creati prima di questa feature) ancora senza codice.

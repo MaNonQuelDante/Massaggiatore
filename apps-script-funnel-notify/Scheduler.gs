@@ -30,11 +30,12 @@ function checkFunnelNotifications() {
   var visti = 0;
   for (var c = 0; c < cals.length; c++) {
     var cal = cals[c];
-    var calMatch = cal.getName().toLowerCase().indexOf(CONFIG.CAL_MATCH) !== -1;
+    var calMatch = funnelCalMatches_(cal.getName());
 
     // v2.5.67: T0 = creazione evento → un lead può prenotare una call FUTURA ma il funnel parte
-    // dalla creazione. Sui calendari "LEAD - Call" scansiono anche gli eventi futuri; sugli altri
-    // resto stretto (eventi titolati "lead - call" iniziati di recente). Il cutoff + dedup evitano spam.
+    // dalla creazione. Sui calendari del funnel ("LEAD - Call"/"FOLLOWUP") scansiono anche gli eventi
+    // futuri; sugli altri resto stretto (eventi col titolo esatto del funnel iniziati di recente).
+    // Il cutoff + dedup evitano spam.
     var eventi;
     try {
       eventi = cal.getEvents(finestraInizio, calMatch ? finestraFineWide : finestraFineNarrow);
@@ -46,7 +47,7 @@ function checkFunnelNotifications() {
       var ev = eventi[i];
       if (ev.isAllDayEvent()) continue;
       var titolo = (ev.getTitle() || '').trim().toLowerCase();
-      if (!calMatch && titolo !== CONFIG.CAL_MATCH) continue;
+      if (!calMatch && !funnelTitleMatches_(titolo)) continue;
       visti++;
       processaEventoFunnel_(ev, props, nowMs, false);
     }
@@ -173,6 +174,21 @@ function funnelCutoffMs_() {
   return isNaN(t) ? 0 : t;
 }
 
+// ===== v2.5.72: MATCH calendario/titolo del funnel ("LEAD - Call" + "FOLLOWUP") =====
+// Il calendario è "del funnel" se il suo NOME contiene una delle CONFIG.CAL_MATCHES.
+function funnelCalMatches_(calName) {
+  var n = (calName || '').toLowerCase();
+  var arr = CONFIG.CAL_MATCHES || [CONFIG.CAL_MATCH];
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i] && n.indexOf(arr[i]) !== -1) return true;
+  }
+  return false;
+}
+// Fuori dai calendari del funnel accetto solo eventi col TITOLO esatto del funnel (legacy).
+function funnelTitleMatches_(title) {
+  return (title || '').trim().toLowerCase() === (CONFIG.TITLE_MATCH || CONFIG.CAL_MATCH);
+}
+
 // ===== TELEFONO LEAD dalla description (wa.me → Telefono: → +prefisso) =====
 function estraiTelefonoFunnel_(desc) {
   if (!desc) return '';
@@ -231,14 +247,14 @@ function test() {
   var cals = CalendarApp.getAllCalendars(), valutati = 0;
   for (var c = 0; c < cals.length; c++) {
     var cal = cals[c];
-    var calMatch = cal.getName().toLowerCase().indexOf(CONFIG.CAL_MATCH) !== -1;
+    var calMatch = funnelCalMatches_(cal.getName());
     var eventi;
     try { eventi = cal.getEvents(finestraInizio, calMatch ? finestraFineWide : finestraFineNarrow); } catch (e) { continue; }
     for (var i = 0; i < eventi.length; i++) {
       var ev = eventi[i];
       if (ev.isAllDayEvent()) continue;
       var titolo = (ev.getTitle() || '').trim().toLowerCase();
-      if (!calMatch && titolo !== CONFIG.CAL_MATCH) continue;
+      if (!calMatch && !funnelTitleMatches_(titolo)) continue;
       valutati++;
       processaEventoFunnel_(ev, props, nowMs, true); // dryRun
     }
