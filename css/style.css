@@ -1181,6 +1181,33 @@ body {
     color: #fff;
 }
 
+/* v2.5.73: archivio collassabile (confermati + no) sotto i pending. Sobrio/muted. */
+.lead-archive {
+    margin-top: 18px;
+    border-top: 1px solid var(--gray-200);
+    padding-top: 12px;
+}
+.lead-archive-summary {
+    cursor: pointer;
+    list-style: none;            /* via il triangolino di default */
+    outline: none;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--gray-500);
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--gray-50);
+    user-select: none;
+}
+.lead-archive-summary::-webkit-details-marker { display: none; }
+.lead-archive-summary::before {
+    content: '▸ ';
+    color: var(--gray-400);
+}
+.lead-archive[open] > .lead-archive-summary::before { content: '▾ '; }
+.lead-archive-summary:hover { color: var(--gray-700); background: var(--gray-100); }
+.lead-archive-body { margin-top: 10px; }
+
 /* Righe-azione del log generate dalle spunte del funnel (distinte dai messaggi del form) */
 .lead-azione-funnel { background: #faf5ff; }
 .lead-tipo-badge.lead-badge-funnel {

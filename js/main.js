@@ -1263,11 +1263,13 @@ function renderCronologia() {
 // Le 5 righe-azione mostrate in ogni card lead. Gli orari sono calcolati da T0 (NON
 // cumulativi): T0 = orario di INIZIO dell'evento Google Calendar con titolo "LEAD - Call"
 // agganciato a quel lead. La riga "noshow" non ha orario (azione di fallback).
+// v2.5.73: gli offsetH sono ore dallo STAMP DI CREAZIONE dell'evento su Calendar (event.created,
+// = ingresso reale del lead), NON dall'orario appuntamento (start evento, sempre "tondo").
 const LEAD_CHECKLIST_STEPS = [
-    { key: 'ingresso',    label: 'Ingresso lead',           offsetH: 0,    defaultChecked: true }, // T0, spuntata di default
-    { key: 'scrivere',    label: 'Scrivere al lead',         offsetH: 2 },                          // T0 + 2h
-    { key: 'sollecitare', label: 'Sollecitare il lead',      offsetH: 4 },                          // T0 + 4h
-    { key: 'chiamata',    label: 'Sollecitare via chiamata', offsetH: 6 },                          // T0 + 6h
+    { key: 'ingresso',    label: 'Ingresso lead',           offsetH: 0,    defaultChecked: true }, // creazione evento, spuntata di default
+    { key: 'scrivere',    label: 'Scrivere al lead',         offsetH: 2 },                          // creazione + 2h
+    { key: 'sollecitare', label: 'Sollecitare il lead',      offsetH: 4 },                          // creazione + 4h
+    { key: 'chiamata',    label: 'Sollecitare via chiamata', offsetH: 6 },                          // creazione + 6h
     { key: 'noshow',      label: 'Inviare a Gruppo NoShow',  offsetH: null }                        // solo checkbox
 ];
 
@@ -1331,7 +1333,10 @@ let leadChecklistTimes = {};
 
 // v2.5.67: filtro della sezione Lead. 'all' | 'pending' | 'confermato' | 'no'. Solo in memoria,
 // NON persistito su Drive.
-let leadFilterMode = 'all';
+// v2.5.73: DEFAULT = 'pending'. La vista parte coi soli lead pending in chiaro; confermati e "no"
+// finiscono in un blocco <details> collassato ("Archivio") sotto la lista. Gli altri filtri
+// (all/confermato/no) restano liste piatte come prima.
+let leadFilterMode = 'pending';
 
 // v2.5.57: agganci manuali lead↔evento "LEAD - Call", caricati da Drive in loadLeadSection.
 //   { "<leadKey>": { eventId?, manualT0?, dismissed?: [eventId...] } }
@@ -1633,10 +1638,11 @@ function escLeadHtml(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-// hh:mm (24h) di T0 + offsetH ore. '' se non c'è T0.
-function leadStepTime(t0, offsetH) {
-    if (!t0 || offsetH === null) return '';
-    const d = new Date(t0.getTime() + offsetH * 3600 * 1000);
+// v2.5.73: hh:mm (24h) di `base` + offsetH ore. `base` = STAMP DI CREAZIONE evento (event.created),
+// NON l'orario appuntamento. '' se non c'è base (es. lead manuale/none) → la card mostra '—'.
+function leadStepTime(base, offsetH) {
+    if (!base || offsetH === null) return '';
+    const d = new Date(base.getTime() + offsetH * 3600 * 1000);
     return d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
@@ -1667,8 +1673,14 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
     const leadKey = lead._key;
     const state = leadChecklistState[leadKey] || {};
     const keyAttr = encodeURIComponent(leadKey); // sicuro come valore di data-attribute
-    const t0 = resolution.t0;
+    const t0 = resolution.t0; // orario APPUNTAMENTO (start evento) — usato solo per il msg NoShow
     const status = resolution.status;
+
+    // v2.5.73: BASE degli orari del funnel = STAMP DI CREAZIONE evento su Calendar (event.created,
+    // = ingresso reale del lead). NON è l'orario appuntamento (t0, che è sempre "tondo"). Se manca
+    // (lead 'manual'/'none' → createdAt null) gli step mostrano '—', che è corretto: senza evento
+    // non c'è un T0 reale da cui far partire il funnel.
+    const funnelBase = resolution.createdAt;
 
     // v2.5.67: funnel congelato per tutti gli stati tranne "pending" (Confermato e No lo chiudono).
     // Gli step successivi all'ingresso restano visibili ma disabilitati.
@@ -1677,7 +1689,7 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
     // v2.5.59: messaggio precompilato per il bottone WhatsApp della riga "noshow"
     const noshowWaHref = buildNoShowWaHref(lead, t0);
 
-    // Righe del funnel (orari da T0; "—" se T0 non c'è)
+    // Righe del funnel (orari dallo stamp di creazione evento; "—" se non c'è creazione)
     let rows = '';
     LEAD_CHECKLIST_STEPS.forEach(step => {
         const checked = (state[step.key] !== undefined) ? state[step.key] : (step.defaultChecked || false);
@@ -1692,7 +1704,7 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
         const frozen = frozenFunnel;
         let timeHtml = '';
         if (step.offsetH !== null) {
-            const t = leadStepTime(t0, step.offsetH);
+            const t = leadStepTime(funnelBase, step.offsetH); // v2.5.73: base = creazione evento, non appuntamento
             timeHtml = `<span class="lc-time">${t || '—'}</span>`;
         }
         const rowHtml = `
@@ -2257,6 +2269,160 @@ function renderLeadFilterBar(statusByKey) {
     }
 }
 
+// v2.5.73: etichette spostate a livello di modulo (erano locali a renderLeadList) così le riusa
+// anche buildLeadCardHtml. Etichette leggibili per i tipi messaggio (id template).
+const LEAD_TIPO_LABELS = {
+    'primo_messaggio': '💬 Primo messaggio',
+    'memo_giorno': '📝 Memo del giorno',
+    'dolce_paranoia': '🔔 Dolce paranoia',
+    'conferma_lettura': '📄 Conferma lettura',
+    'riscontro': '↩️ Riscontro',
+    'riconferma': '✅ Riconferma'
+};
+function leadTipoLabel(tipo) {
+    if (!tipo) return '💬 Primo messaggio'; // retrocompat: entry senza tipo
+    if (LEAD_TIPO_LABELS[tipo]) return LEAD_TIPO_LABELS[tipo];
+    return tipo.charAt(0).toUpperCase() + tipo.slice(1).replace(/_/g, ' ');
+}
+// v2.5.61: etichette per le righe-azione generate dalle spunte del funnel (nel log della card).
+const LEAD_FUNNEL_LOG_LABELS = {
+    ingresso:    '📥 Ingresso lead',
+    scrivere:    '✍️ Scrivere al lead',
+    sollecitare: '🔔 Sollecitare il lead',
+    chiamata:    '📞 Sollecitare via chiamata',
+    noshow:      '🚫 Inviato a Gruppo NoShow'
+};
+
+// v2.5.73: HTML di UNA scheda lead. Estratto da renderLeadList per riusarlo sia per i pending
+// (vista piena) sia per l'archivio (confermati+no) dentro il <details> collassato — senza
+// duplicare codice. `leadStatus` = stato conferma effettivo (confermato|pending|no), già calcolato.
+function buildLeadCardHtml(lead, leadStatus) {
+    const nomeCompleto = (`${lead.nome} ${lead.cognome || ''}`).trim() || 'Lead senza nome';
+    const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '—'; // v2.5.59: +39 339 486 5982
+    const count = lead.messaggi.length;
+    const keyAttr = encodeURIComponent(lead._key);
+    // v2.5.64: codice ID lead (deep-link da Calendar). Esposto sulla card come badge + attributo.
+    const leadCode = leadCodes[lead._key] || '';
+    lead._code = leadCode || null;
+    const codeBadge = leadCode ? ` <span class="lead-code-badge" title="Codice scheda lead">${leadCode}</span>` : '';
+
+    // v2.5.55/57: blocco funnel-conferma. Risolve T0 con agganci manuali + automatico + proposte.
+    // v2.5.61: calcolato PRIMA del log perché serve a datare la riga "ingresso" (usa createdAt).
+    const resolution = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
+
+    // v2.5.61: il log della card unisce i messaggi del form E le spunte del funnel, ordinati
+    // cronologicamente. Ogni voce: { sortTs, html }.
+    const entries = [];
+
+    // (a) Messaggi del form (cronologia) — invariati.
+    lead.messaggi.forEach(msg => {
+        const d = new Date(msg.timestamp);
+        const dateStr = d.toLocaleDateString('it-IT');
+        const timeStr = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+        // v2.5.59: il nome servizio ("Finanza Efficace"/"Stock Gain") serve solo ai
+        // messaggi/rubrica → rimosso da questa label. Resta solo il tag FE/SG - Lead.
+        const societa = msg.societa ? ` · <i class="fas fa-building"></i> ${msg.societa}` : '';
+        entries.push({
+            sortTs: d.getTime(),
+            html: `
+            <div class="lead-azione">
+                <span class="lead-tipo-badge">${leadTipoLabel(msg.tipoMessaggio)}</span>
+                <span class="lead-azione-meta">
+                    <i class="fas fa-clock"></i> ${dateStr} ${timeStr}${societa}
+                </span>
+            </div>`
+        });
+    });
+
+    // (b) Spunte del funnel — una riga per ogni step CHECKED, con timestamp congelato.
+    const stepState = leadChecklistState[lead._key] || {};
+    const stepTimes = leadChecklistTimes[lead._key] || {};
+    LEAD_CHECKLIST_STEPS.forEach(step => {
+        const checked = (stepState[step.key] !== undefined) ? stepState[step.key] : (step.defaultChecked || false);
+        if (!checked) return; // step non spuntato → nessuna riga nel log
+
+        let ts = null;
+        const recorded = stepTimes[step.key];
+        if (recorded) {
+            ts = new Date(recorded); // firstCheckedAt congelato (mai cambia)
+        } else if (step.key === 'ingresso') {
+            // "ingresso" è spuntato di default e non ha firstCheckedAt. v2.5.63: uso lo STAMP
+            // DI CREAZIONE dell'evento "LEAD - Call" (createdAt = quando Calendar ha rilevato
+            // il nuovo evento = ingresso reale), NON l'orario appuntamento (t0). Fallback al
+            // primo messaggio del lead se il created non c'è.
+            ts = resolution.createdAt || (lead.messaggi[0] ? new Date(lead.messaggi[0].timestamp) : null);
+        }
+
+        let metaTime, sortTs;
+        if (ts && !isNaN(ts.getTime())) {
+            const dateStr = ts.toLocaleDateString('it-IT');
+            const timeStr = ts.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            metaTime = `${dateStr} ${timeStr}`;
+            sortTs = ts.getTime();
+        } else {
+            // spunta antecedente a questa feature, senza orario registrato: niente Date.now()
+            // inventato (sarebbe falso). Mostro un marcatore onesto e ordino best-effort sulla
+            // BASE del funnel (v2.5.73: stamp di creazione evento, non l'appuntamento t0).
+            metaTime = 'orario non registrato';
+            sortTs = resolution.createdAt
+                ? resolution.createdAt.getTime() + ((step.offsetH || 0) * 3600 * 1000)
+                : (lead.ultimoContatto || 0);
+        }
+
+        entries.push({
+            sortTs,
+            html: `
+            <div class="lead-azione lead-azione-funnel">
+                <span class="lead-tipo-badge lead-badge-funnel">${LEAD_FUNNEL_LOG_LABELS[step.key] || step.label}</span>
+                <span class="lead-azione-meta">
+                    <i class="fas fa-clock"></i> ${metaTime}
+                </span>
+            </div>`
+        });
+    });
+
+    // Log ordinato cronologicamente (messaggi + funnel mescolati).
+    entries.sort((a, b) => a.sortTs - b.sortTs);
+    const azioniHtml = entries.map(e => e.html).join('');
+
+    const checklistHtml = renderLeadChecklist(lead, resolution, leadStatus);
+
+    // v2.5.67: controllo a 3 stati (Confermato / Pending / No) al posto della vecchia checkbox.
+    // Solo "Pending" tiene il funnel attivo (e fa partire le mail); Confermato e No lo congelano.
+    const statusBtn = (val, icon, label) =>
+        `<button type="button" class="lead-status-btn lead-status-${val}${leadStatus === val ? ' active' : ''}" data-lead-status="${val}" data-lead-key="${keyAttr}" aria-pressed="${leadStatus === val}">${icon} ${label}</button>`;
+    const statusControlHtml = `
+            <div class="lead-status-control" role="group" aria-label="Stato conferma lead">
+                ${statusBtn('confermato', '✅', 'Confermato')}
+                ${statusBtn('pending', '🕒', 'Pending')}
+                ${statusBtn('no', '✖️', 'No')}
+            </div>`;
+
+    // v2.5.63: giorno+ora dell'APPUNTAMENTO accanto al nome (t0 = start evento "LEAD - Call"
+    // o orario a mano). Distinto dall'"ingresso" nel log, che usa lo stamp di creazione.
+    const apptWhen = resolution.t0 ? fmtLeadEventWhen(resolution.t0) : '';
+    const apptHtml = apptWhen
+        ? ` <span class="lead-appt-when" style="font-size: 12px; color: var(--gray-500); font-weight: normal;">· 📅 ${apptWhen}</span>`
+        : '';
+
+    return `
+        <div class="cronologia-item" id="lead-card-${keyAttr}" data-lead-code="${leadCode}">
+            <div class="cronologia-header">
+                <strong>${nomeCompleto}</strong>${codeBadge}${apptHtml}
+                <span style="font-size: 13px; color: var(--gray-500);">
+                    <i class="fas fa-phone"></i> ${telefono} · ${count} ${count === 1 ? 'azione' : 'azioni'}
+                    ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
+                </span>
+            </div>
+            ${statusControlHtml}
+            ${checklistHtml}
+            <div class="lead-azioni">
+                ${azioniHtml}
+            </div>
+        </div>
+    `;
+}
+
 // Render della lista lead dai dati già in memoria: dopo una scelta utente (conferma/aggancio/
 // orario a mano) basta richiamare questa, senza riscaricare nulla da Drive.
 function renderLeadList() {
@@ -2271,167 +2437,39 @@ function renderLeadList() {
     // v2.5.67: barra contatore (3 stati) + filtro in cima alla sezione.
     renderLeadFilterBar(statusByKey);
 
-    // v2.5.67: applica il filtro per stato PRIMA di generare l'HTML ('all' = nessun filtro).
-    let leadsToShow = leadSectionLeads;
-    if (leadFilterMode === 'pending' || leadFilterMode === 'confermato' || leadFilterMode === 'no') {
-        leadsToShow = leadSectionLeads.filter(l => statusByKey[l._key] === leadFilterMode);
-    }
-
-    // Etichette leggibili per i tipi messaggio (id template); fallback per tipi sconosciuti
-    const tipoLabels = {
-        'primo_messaggio': '💬 Primo messaggio',
-        'memo_giorno': '📝 Memo del giorno',
-        'dolce_paranoia': '🔔 Dolce paranoia',
-        'conferma_lettura': '📄 Conferma lettura',
-        'riscontro': '↩️ Riscontro',
-        'riconferma': '✅ Riconferma'
-    };
-    const tipoLabel = (tipo) => {
-        if (!tipo) return '💬 Primo messaggio'; // retrocompat: entry senza tipo
-        if (tipoLabels[tipo]) return tipoLabels[tipo];
-        return tipo.charAt(0).toUpperCase() + tipo.slice(1).replace(/_/g, ' ');
-    };
-
-    // v2.5.61: etichette per le righe-azione generate dalle spunte del funnel (nel log della card).
-    const funnelLogLabels = {
-        ingresso:    '📥 Ingresso lead',
-        scrivere:    '✍️ Scrivere al lead',
-        sollecitare: '🔔 Sollecitare il lead',
-        chiamata:    '📞 Sollecitare via chiamata',
-        noshow:      '🚫 Inviato a Gruppo NoShow'
-    };
-
+    // v2.5.73: vista DI DEFAULT ('pending') = solo i pending in chiaro + un blocco <details>
+    // collassato ("Archivio") coi confermati e i "no" sotto. Gli altri filtri (all/confermato/no)
+    // restano liste piatte come prima. La card è generata da buildLeadCardHtml (no duplicazione).
     let html = '';
-    leadsToShow.forEach(lead => {
-        const nomeCompleto = (`${lead.nome} ${lead.cognome || ''}`).trim() || 'Lead senza nome';
-        const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '—'; // v2.5.59: +39 339 486 5982
-        const count = lead.messaggi.length;
-        const keyAttr = encodeURIComponent(lead._key);
-        const leadStatus = statusByKey[lead._key]; // v2.5.67: stato conferma effettivo (confermato|pending|no)
-        // v2.5.64: codice ID lead (deep-link da Calendar). Esposto sulla card come badge + attributo.
-        const leadCode = leadCodes[lead._key] || '';
-        lead._code = leadCode || null;
-        const codeBadge = leadCode ? ` <span class="lead-code-badge" title="Codice scheda lead">${leadCode}</span>` : '';
-
-        // v2.5.55/57: blocco funnel-conferma. Risolve T0 con agganci manuali + automatico + proposte.
-        // v2.5.61: calcolato PRIMA del log perché serve a datare la riga "ingresso" (usa T0).
-        const resolution = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
-
-        // v2.5.61: il log della card unisce i messaggi del form E le spunte del funnel, ordinati
-        // cronologicamente. Ogni voce: { sortTs, html }.
-        const entries = [];
-
-        // (a) Messaggi del form (cronologia) — invariati.
-        lead.messaggi.forEach(msg => {
-            const d = new Date(msg.timestamp);
-            const dateStr = d.toLocaleDateString('it-IT');
-            const timeStr = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-            // v2.5.59: il nome servizio ("Finanza Efficace"/"Stock Gain") serve solo ai
-            // messaggi/rubrica → rimosso da questa label. Resta solo il tag FE/SG - Lead.
-            const societa = msg.societa ? ` · <i class="fas fa-building"></i> ${msg.societa}` : '';
-            entries.push({
-                sortTs: d.getTime(),
-                html: `
-                <div class="lead-azione">
-                    <span class="lead-tipo-badge">${tipoLabel(msg.tipoMessaggio)}</span>
-                    <span class="lead-azione-meta">
-                        <i class="fas fa-clock"></i> ${dateStr} ${timeStr}${societa}
-                    </span>
-                </div>`
-            });
+    if (leadFilterMode === 'pending') {
+        const pendingLeads = leadSectionLeads.filter(l => statusByKey[l._key] === 'pending');
+        const archiveLeads = leadSectionLeads.filter(l => {
+            const s = statusByKey[l._key];
+            return s === 'confermato' || s === 'no';
         });
 
-        // (b) Spunte del funnel — una riga per ogni step CHECKED, con timestamp congelato.
-        const stepState = leadChecklistState[lead._key] || {};
-        const stepTimes = leadChecklistTimes[lead._key] || {};
-        LEAD_CHECKLIST_STEPS.forEach(step => {
-            const checked = (stepState[step.key] !== undefined) ? stepState[step.key] : (step.defaultChecked || false);
-            if (!checked) return; // step non spuntato → nessuna riga nel log
+        html = pendingLeads.map(l => buildLeadCardHtml(l, statusByKey[l._key])).join('');
+        if (!html) html = '<p class="placeholder-text">Nessun lead pending.</p>';
 
-            let ts = null;
-            const recorded = stepTimes[step.key];
-            if (recorded) {
-                ts = new Date(recorded); // firstCheckedAt congelato (mai cambia)
-            } else if (step.key === 'ingresso') {
-                // "ingresso" è spuntato di default e non ha firstCheckedAt. v2.5.63: uso lo STAMP
-                // DI CREAZIONE dell'evento "LEAD - Call" (createdAt = quando Calendar ha rilevato
-                // il nuovo evento = ingresso reale), NON l'orario appuntamento (t0). Fallback al
-                // primo messaggio del lead se il created non c'è.
-                ts = resolution.createdAt || (lead.messaggi[0] ? new Date(lead.messaggi[0].timestamp) : null);
-            }
-
-            let metaTime, sortTs;
-            if (ts && !isNaN(ts.getTime())) {
-                const dateStr = ts.toLocaleDateString('it-IT');
-                const timeStr = ts.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-                metaTime = `${dateStr} ${timeStr}`;
-                sortTs = ts.getTime();
-            } else {
-                // spunta antecedente a questa feature, senza orario registrato: niente Date.now()
-                // inventato (sarebbe falso). Mostro un marcatore onesto e ordino best-effort su T0.
-                metaTime = 'orario non registrato';
-                sortTs = resolution.t0
-                    ? resolution.t0.getTime() + ((step.offsetH || 0) * 3600 * 1000)
-                    : (lead.ultimoContatto || 0);
-            }
-
-            entries.push({
-                sortTs,
-                html: `
-                <div class="lead-azione lead-azione-funnel">
-                    <span class="lead-tipo-badge lead-badge-funnel">${funnelLogLabels[step.key] || step.label}</span>
-                    <span class="lead-azione-meta">
-                        <i class="fas fa-clock"></i> ${metaTime}
-                    </span>
-                </div>`
-            });
-        });
-
-        // Log ordinato cronologicamente (messaggi + funnel mescolati).
-        entries.sort((a, b) => a.sortTs - b.sortTs);
-        const azioniHtml = entries.map(e => e.html).join('');
-
-        const checklistHtml = renderLeadChecklist(lead, resolution, leadStatus);
-
-        // v2.5.67: controllo a 3 stati (Confermato / Pending / No) al posto della vecchia checkbox.
-        // Solo "Pending" tiene il funnel attivo (e fa partire le mail); Confermato e No lo congelano.
-        const statusBtn = (val, icon, label) =>
-            `<button type="button" class="lead-status-btn lead-status-${val}${leadStatus === val ? ' active' : ''}" data-lead-status="${val}" data-lead-key="${keyAttr}" aria-pressed="${leadStatus === val}">${icon} ${label}</button>`;
-        const statusControlHtml = `
-                <div class="lead-status-control" role="group" aria-label="Stato conferma lead">
-                    ${statusBtn('confermato', '✅', 'Confermato')}
-                    ${statusBtn('pending', '🕒', 'Pending')}
-                    ${statusBtn('no', '✖️', 'No')}
-                </div>`;
-
-        // v2.5.63: giorno+ora dell'APPUNTAMENTO accanto al nome (t0 = start evento "LEAD - Call"
-        // o orario a mano). Distinto dall'"ingresso" nel log, che usa lo stamp di creazione.
-        const apptWhen = resolution.t0 ? fmtLeadEventWhen(resolution.t0) : '';
-        const apptHtml = apptWhen
-            ? ` <span class="lead-appt-when" style="font-size: 12px; color: var(--gray-500); font-weight: normal;">· 📅 ${apptWhen}</span>`
-            : '';
-
-        html += `
-            <div class="cronologia-item" id="lead-card-${keyAttr}" data-lead-code="${leadCode}">
-                <div class="cronologia-header">
-                    <strong>${nomeCompleto}</strong>${codeBadge}${apptHtml}
-                    <span style="font-size: 13px; color: var(--gray-500);">
-                        <i class="fas fa-phone"></i> ${telefono} · ${count} ${count === 1 ? 'azione' : 'azioni'}
-                        ${lead.telefono ? `<a href="https://wa.me/${lead.telefono.replace(/\D/g, '')}" target="_blank" rel="noopener" class="lead-wa-btn"><i class="fab fa-whatsapp"></i> WhatsApp</a>` : ''}
-                    </span>
-                </div>
-                ${statusControlHtml}
-                ${checklistHtml}
-                <div class="lead-azioni">
-                    ${azioniHtml}
-                </div>
-            </div>
-        `;
-    });
-
-    // v2.5.61: se il filtro non lascia nessun lead, messaggio chiaro invece della lista vuota.
-    if (!html) {
-        html = '<p class="placeholder-text">Nessun lead per questo filtro.</p>';
+        // Archivio collassabile (chiuso di default; lo stato di apertura NON è persistito).
+        if (archiveLeads.length) {
+            const nConf = archiveLeads.filter(l => statusByKey[l._key] === 'confermato').length;
+            const nNo = archiveLeads.filter(l => statusByKey[l._key] === 'no').length;
+            const archiveCards = archiveLeads.map(l => buildLeadCardHtml(l, statusByKey[l._key])).join('');
+            html += `
+            <details class="lead-archive">
+                <summary class="lead-archive-summary">🗂️ Archivio · ✅ ${nConf} confermati · ✖️ ${nNo} no</summary>
+                <div class="lead-archive-body">${archiveCards}</div>
+            </details>`;
+        }
+    } else {
+        // Filtri espliciti: lista piatta. 'all' = tutti; 'confermato'/'no' = solo quello stato.
+        let leadsToShow = leadSectionLeads;
+        if (leadFilterMode === 'confermato' || leadFilterMode === 'no') {
+            leadsToShow = leadSectionLeads.filter(l => statusByKey[l._key] === leadFilterMode);
+        }
+        html = leadsToShow.map(l => buildLeadCardHtml(l, statusByKey[l._key])).join('');
+        if (!html) html = '<p class="placeholder-text">Nessun lead per questo filtro.</p>';
     }
 
     listContainer.innerHTML = html;
