@@ -1921,6 +1921,44 @@ body {
     cursor: not-allowed;
 }
 
+/* ===== v2.5.77: BOTTONE "COPIA LINK MEET" (INDACO) ===== */
+/* Distinto dal verde "Apri Meet": copia SOLO l'URL nudo per il cliente. */
+.btn-meet-copy {
+    background: linear-gradient(135deg, #667eea 0%, #5563d6 100%) !important;
+    color: white !important;
+    border: none;
+    cursor: pointer;
+    margin-left: 8px;
+}
+.btn-meet-copy:hover {
+    background: linear-gradient(135deg, #5563d6 0%, #4453c0 100%) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+    color: white !important;
+}
+
+/* Variante compatta nella lista eventi (Home) — è un <button>, non un <a> */
+.event-meet button.event-meet-btn--copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, #667eea 0%, #5563d6 100%);
+    color: white;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+    margin-left: 8px;
+}
+.event-meet button.event-meet-btn--copy:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+}
+
 /* ===== v2.5.64: CODICE ID LEAD + DEEP-LINK SCHEDA ===== */
 /* v2.5.74: il vecchio .lead-code-badge (badge gradiente gigante, troppo invasivo) è stato
    sostituito dall'ID discreto .lead-code accanto al nome (vedi "REDESIGN SCHEDA LEAD"). */

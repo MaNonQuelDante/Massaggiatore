@@ -1137,6 +1137,9 @@ function fillFormFromEvent(event) {
                     <a href="${meetLink}" target="_blank" class="btn-meet">
                         <i class="fas fa-video"></i> Apri Google Meet
                     </a>
+                    <button type="button" onclick="copyMeetLink('${meetLink}')" class="btn-meet btn-meet-copy" title="Copia solo il link Meet (pulito, per il cliente)">
+                        <i class="fas fa-copy"></i> Copia link Meet
+                    </button>
                 </div>
             `;
             meetContainer.style.display = 'block';
@@ -1412,6 +1415,15 @@ async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, 
                     console.log('🆔 [v2.5.64] Codice lead assegnato:', leadCode, key);
                 }
                 window.leadCodes = codes; // tieni allineata la mappa in memoria della sezione Lead
+            } else {
+                // v2.5.77: diagnostica — perché leadCode resta null (→ niente riga "📂 Scheda lead").
+                // Il colpevole più frequente è accessToken assente/scaduto (GIS dopo ~1h).
+                console.warn('⚠️ [v2.5.77] leadCode NON assegnato (riga scheda assente nell\'evento). Prerequisiti:', {
+                    DriveStorage: !!window.DriveStorage,
+                    accessToken: !!window.accessToken,
+                    leadIdentityKey: !!window.leadIdentityKey,
+                    formatLeadCode: !!window.formatLeadCode
+                });
             }
         } catch (error) {
             console.warn('⚠️ [v2.5.64] Assegnazione codice lead fallita (ignorata):', error.message);
@@ -1446,21 +1458,29 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         return;
     }
     
-    if (!telefono) {
-        console.warn('⚠️ Nessun telefono fornito per link WhatsApp');
-        return;
+    // v2.5.77: il telefono NON è più un blocco totale. Senza numero saltiamo SOLO le
+    // righe WhatsApp/chiamata, ma il rename del titolo e la riga "📂 Scheda lead" devono
+    // comunque essere applicati (prima un return precoce li uccideva tutti insieme).
+    const hasPhone = !!telefono;
+    if (!hasPhone) {
+        console.warn('⚠️ [v2.5.77] Nessun telefono: salto WhatsApp/chiamata, proseguo con titolo + scheda lead');
     }
-    
+
     try {
-        // Normalizza numero per WhatsApp
-        let phoneClean = telefono.replace(/\s+/g, '').replace(/^\\+/, '');
-        if (!phoneClean.startsWith('39') && phoneClean.length === 10) {
-            phoneClean = '39' + phoneClean;
+        // Normalizza numero per WhatsApp (solo se c'è il telefono)
+        let whatsappLink = '';
+        let phoneLink = '';
+        if (hasPhone) {
+            // v2.5.77 FIX: era /^\\+/ (backslash di troppo) → il "+" iniziale NON veniva
+            // rimosso e usciva "wa.me/+39…" malformato. Ora come la gemella corretta sotto.
+            let phoneClean = telefono.replace(/\s+/g, '').replace(/^\+/, '');
+            if (!phoneClean.startsWith('39') && phoneClean.length === 10) {
+                phoneClean = '39' + phoneClean;
+            }
+            // Genera link WhatsApp + link chiamata telefonica classica (tel:)
+            whatsappLink = `https://wa.me/${phoneClean}`;
+            phoneLink = `tel:+${phoneClean}`;
         }
-        
-        // Genera link WhatsApp + link chiamata telefonica classica (tel:)
-        const whatsappLink = `https://wa.me/${phoneClean}`;
-        const phoneLink = `tel:+${phoneClean}`;
 
         // 1. Ottieni evento corrente
         // v2.5.42 FIX: usa il calendario reale dell'evento (era hardcoded 'primary',
@@ -1480,15 +1500,19 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         const schedaLine = appLink ? `📂 Scheda lead: ${appLink}` : '';
 
         // 2. Controlla se link già presente
-        const needsWhatsAppLink = !currentDescription.includes('wa.me/');
+        // v2.5.77: il link WhatsApp si aggiunge SOLO se ho il telefono. La riga scheda no:
+        // dipende solo da appLink (leadCode), così entra anche su lead senza numero.
+        const needsWhatsAppLink = hasPhone && !currentDescription.includes('wa.me/');
         // v2.5.64: anche eventi vecchi (già con wa.me ma SENZA ?id=) ricevono la riga scheda al passaggio.
         const needsLeadLink = !!appLink && !currentDescription.includes('?id=');
 
         // 3. 🆕 v2.5.27: Calcola nuovo titolo evento (solo Nome Cognome)
         // v2.5.65: Title Case in SCRITTURA (no MAIUSCOLO) → "Dante Davide Ciavarella"
+        // v2.5.77: rename indipendente dal telefono, ma solo se newTitle non è vuoto
+        // (un nome assente non deve azzerare il titolo dell'evento).
         const newTitle = toTitleCaseNome(cognome ? `${nome} ${cognome}` : nome);
         const currentTitle = event.result.summary || '';
-        const needsTitleUpdate = currentTitle !== newTitle;
+        const needsTitleUpdate = !!newTitle && currentTitle !== newTitle;
 
         // 4. Prepara aggiornamenti
         const updates = {};
@@ -1501,9 +1525,10 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
             updates.description = newDescription;
             console.log('📱 [v2.5.64] WhatsApp + chiamata' + (schedaLine ? ' + scheda lead' : '') + ' in cima');
         } else if (needsLeadLink) {
-            // wa.me già presente ma manca la scheda: aggiungo SOLO la riga scheda in cima (idempotente).
+            // v2.5.77: wa.me già presente OPPURE lead senza telefono: in entrambi i casi
+            // aggiungo SOLO la riga scheda in cima (idempotente, niente link rotti).
             updates.description = schedaLine + '\n' + currentDescription;
-            console.log('📂 [v2.5.64] Aggiunta riga scheda lead a evento esistente:', appLink);
+            console.log('📂 [v2.5.77] Aggiunta riga scheda lead (telefono ' + (hasPhone ? 'presente' : 'assente') + '):', appLink);
         }
 
         if (needsTitleUpdate) {
@@ -1526,6 +1551,15 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         
     } catch (error) {
         console.error('❌ Errore aggiornamento evento:', error);
+        // v2.5.77: prima il fallimento restava SOLO in console (il chiamante logga warn).
+        // Lo rendiamo visibile: tipicamente è il token Google scaduto/revocato (401/403),
+        // perciò l'evento resta senza link/titolo e Dante non se ne accorgeva.
+        const code = error?.result?.error?.code || error?.status;
+        if (code === 401 || code === 403) {
+            showNotification('⚠️ Link non iniettati nell\'evento — riconnetti Google e riprova', 'error');
+        } else {
+            showNotification('⚠️ Evento non aggiornato (link/titolo). Dettagli nella console.', 'error');
+        }
         throw error;
     }
 }
@@ -1570,34 +1604,38 @@ async function ensureEventTitleCorrect(event) {
         
         console.log('✏️ [v2.5.33] Parsing:', { original: event.summary, cleaned: leadName, newTitle });
         
-        // Controlla se titolo è già corretto
-        const titleNeedsUpdate = event.summary !== newTitle;
-        
+        // Controlla se titolo è già corretto (v2.5.77: solo se newTitle non è vuoto,
+        // così un parsing che restituisce stringa vuota non azzera mai il titolo)
+        const titleNeedsUpdate = !!newTitle && event.summary !== newTitle;
+
         // 🆕 v2.5.32: Controlla se manca WhatsApp link
         const telefono = document.getElementById('telefono')?.value.trim();
+        const hasPhone = !!telefono;
         let whatsappNeedsUpdate = false;
         let leadLinkNeedsUpdate = false;
 
         // v2.5.64: codice ID lead (read-only dalla mappa in memoria popolata dalla sezione Lead /
         // da markLeadAsContacted). Qui NON creo codici nuovi: se non c'è ancora, salto la riga scheda
         // (verrà aggiunta al primo contatto). Stessa leadIdentityKey usata ovunque.
-        const leadKey = (window.leadIdentityKey && telefono) ? window.leadIdentityKey(telefono, firstName, lastName) : null;
+        // v2.5.77: NON richiedo più il telefono per la chiave — leadIdentityKey cade su "nome:" quando
+        // il numero manca, ESATTAMENTE come fa markLeadAsContacted → il codice si ritrova lo stesso.
+        const leadKey = window.leadIdentityKey ? window.leadIdentityKey(telefono, firstName, lastName) : null;
         const leadCode = (leadKey && window.leadCodes) ? (window.leadCodes[leadKey] || null) : null;
         const appLink = leadCode ? `${window.location.origin}${window.location.pathname}?id=${leadCode}` : '';
         const schedaLine = appLink ? `📂 Scheda lead: ${appLink}` : '';
 
-        if (telefono) {
-            // Verifica se evento ha già WhatsApp link e/o riga scheda
+        // v2.5.77: leggo la descrizione UNA volta sola (prima c'erano DUE events.get ridondanti).
+        // La riga scheda non dipende più dal telefono: basta avere un appLink (codice lead).
+        let currentDescription = '';
+        if (hasPhone || appLink) {
             const currentEvent = await window.gapi.client.calendar.events.get({
                 calendarId: event.calendarId || 'primary',
                 eventId: event.id
             });
-
-            const currentDescription = currentEvent.result.description || '';
-            whatsappNeedsUpdate = !currentDescription.includes('wa.me/');
+            currentDescription = currentEvent.result.description || '';
+            whatsappNeedsUpdate = hasPhone && !currentDescription.includes('wa.me/');
             leadLinkNeedsUpdate = !!appLink && !currentDescription.includes('?id=');
-
-            console.log('📱 [v2.5.64] Check descrizione:', { telefono, hasWa: !whatsappNeedsUpdate, needsScheda: leadLinkNeedsUpdate });
+            console.log('📱 [v2.5.77] Check descrizione:', { hasPhone, hasWa: !whatsappNeedsUpdate, needsScheda: leadLinkNeedsUpdate });
         }
 
         // Se nulla da aggiornare, skip
@@ -1613,32 +1651,23 @@ async function ensureEventTitleCorrect(event) {
             console.log('✏️ [v2.5.32] Titolo evento da correggere:', event.summary, '→', newTitle);
         }
 
-        if ((whatsappNeedsUpdate || leadLinkNeedsUpdate) && telefono) {
-            // Normalizza numero
+        if (whatsappNeedsUpdate) {
+            // Telefono presente e wa.me mancante → WhatsApp + chiamata (+ scheda) in cima.
             let phoneClean = telefono.replace(/\s+/g, '').replace(/^\+/, '');
             if (!phoneClean.startsWith('39') && phoneClean.length === 10) {
                 phoneClean = '39' + phoneClean;
             }
-
             const whatsappLink = `https://wa.me/${phoneClean}`;
             const phoneLink = `tel:+${phoneClean}`;
-            const currentEvent = await window.gapi.client.calendar.events.get({
-                calendarId: event.calendarId || 'primary',
-                eventId: event.id
-            });
-
-            const currentDescription = currentEvent.result.description || '';
-            if (whatsappNeedsUpdate) {
-                // 🆕 v2.5.62: WhatsApp + chiamata in CIMA. 🆕 v2.5.64: + riga scheda lead (se ho il codice).
-                const block = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
-                    (schedaLine ? '\n' + schedaLine : '');
-                updates.description = block + (currentDescription ? '\n\n' + currentDescription : '');
-                console.log('📱 [v2.5.64] WhatsApp + chiamata' + (schedaLine ? ' + scheda lead' : '') + ' in cima');
-            } else {
-                // wa.me già presente, manca solo la scheda: aggiungo SOLO quella riga in cima (idempotente).
-                updates.description = schedaLine + '\n' + currentDescription;
-                console.log('📂 [v2.5.64] Aggiunta riga scheda lead a evento esistente:', appLink);
-            }
+            const block = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
+                (schedaLine ? '\n' + schedaLine : '');
+            updates.description = block + (currentDescription ? '\n\n' + currentDescription : '');
+            console.log('📱 [v2.5.77] WhatsApp + chiamata' + (schedaLine ? ' + scheda lead' : '') + ' in cima');
+        } else if (leadLinkNeedsUpdate) {
+            // v2.5.77: wa.me già presente OPPURE lead senza telefono → aggiungo SOLO la riga scheda
+            // in cima (idempotente). Prima questo ramo non scattava mai senza telefono.
+            updates.description = schedaLine + '\n' + currentDescription;
+            console.log('📂 [v2.5.77] Aggiunta riga scheda lead (telefono ' + (hasPhone ? 'presente' : 'assente') + '):', appLink);
         }
 
         // Aggiorna evento
@@ -1797,10 +1826,13 @@ async function displayCalendarView() {
             
             let meetBtn = '';
             if (existingMeet) {
-                // Meet esiste → link verde
+                // Meet esiste → link verde + bottone "copia link nudo" (v2.5.77)
                 meetBtn = `<a href="${existingMeet}" target="_blank" class="event-meet-btn event-meet-btn--exists" title="Apri Google Meet">
                     <i class="fab fa-google"></i> Meet
-                </a>`;
+                </a>
+                <button type="button" class="event-meet-btn event-meet-btn--copy" onclick="copyMeetLink('${existingMeet}')" title="Copia solo il link Meet (pulito, per il cliente)">
+                    <i class="fas fa-copy"></i> Copia link
+                </button>`;
             } else {
                 // Meet NON esiste → bottone blu "+ Meet" (SEMPRE, anche passati)
                 meetBtn = `<button class="event-meet-btn event-meet-btn--add" 
@@ -1970,7 +2002,10 @@ async function addMeetToEvent(eventId, calendarId, btnEl) {
                 const container = btnEl.parentElement;
                 container.innerHTML = `<a href="${meetLink}" target="_blank" class="event-meet-btn event-meet-btn--exists" title="Apri Google Meet">
                     <i class="fab fa-google"></i> Meet
-                </a>`;
+                </a>
+                <button type="button" class="event-meet-btn event-meet-btn--copy" onclick="copyMeetLink('${meetLink}')" title="Copia solo il link Meet (pulito, per il cliente)">
+                    <i class="fas fa-copy"></i> Copia link
+                </button>`;
             }
         } else {
             // Link non ancora pronto — aggiorna dopo 3 secondi
@@ -2048,6 +2083,39 @@ async function addMeetToEventFromForm(eventId, calendarId) {
         }
     }, 3500);
 }
+
+// ===== v2.5.77: COPIA SOLO IL LINK MEET (niente "pippone" di Google) =====
+// Il bottone "Copia invito" di Google Calendar incolla SEMPRE un blocco fisso (orario,
+// fuso, "Informazioni per partecipare", link…) generato da Google: NON è modificabile via
+// API, non è nella nostra description. Questo invece mette negli appunti SOLO l'URL nudo
+// (https://meet.google.com/xxx-xxxx-xxx), pronto da incollare pulito al cliente.
+async function copyMeetLink(url) {
+    if (!url) {
+        showNotification('❌ Nessun link Meet da copiare', 'error');
+        return;
+    }
+    try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(url);
+        } else {
+            // Fallback per contesti senza Clipboard API (http non sicuro, browser vecchi)
+            const ta = document.createElement('textarea');
+            ta.value = url;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+        }
+        showNotification('✅ Link Meet copiato', 'success');
+    } catch (err) {
+        console.error('❌ Copia link Meet fallita:', err);
+        showNotification('❌ Impossibile copiare il link Meet', 'error');
+    }
+}
+window.copyMeetLink = copyMeetLink;
 
 // ===== ESPORTA FUNZIONI =====
 window.syncCalendarEvents = syncCalendarEvents;
