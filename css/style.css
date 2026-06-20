@@ -1163,6 +1163,7 @@ body {
 /* v2.5.74: Blocco 3 — stato conferma. 3 bottoni piccoli inline a larghezza uguale, divider sopra. */
 .lead-card .lead-status-control {
     display: flex;
+    flex-wrap: wrap; /* v2.5.80: il bottone "Riavvia funnel" va a capo su riga propria */
     gap: 6px;
     margin: 12px 0;
     padding-top: 12px;
@@ -1196,6 +1197,17 @@ body {
 }
 .lead-card .lead-status-btn.lead-status-no.active {
     background: #fef2f2; color: #b91c1c; border-color: #fca5a5;
+}
+
+/* v2.5.80: "🔄 Riavvia funnel" — riga propria sotto i 3 stati (compare solo a funnel congelato).
+   Neutro/tratteggiato per distinguerlo dai bottoni di stato; in hover vira al blu (azione "riparti"). */
+.lead-card .lead-status-btn.lead-funnel-restart {
+    flex: 1 0 100%;
+    color: var(--gray-600);
+    border-style: dashed;
+}
+.lead-card .lead-status-btn.lead-funnel-restart:hover {
+    background: #eff6ff; color: #1d4ed8; border-color: #93c5fd;
 }
 
 /* Tag accanto al titolo del funnel: verde "Confermato" / grigio "Non confermato" */

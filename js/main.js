@@ -1940,6 +1940,20 @@ async function setLeadStatus(leadKey, status) {
 }
 window.setLeadStatus = setLeadStatus;
 
+// v2.5.80: "Riavvia funnel" — riporta MANUALMENTE a "pending" un lead congelato (Confermato/No),
+// facendo ripartire il funnel di conferma per l'APPUNTAMENTO CORRENTE. Serve perché SPOSTARE un
+// evento esistente NON cambia event.created (= createdISO) → getLeadStatus resta sullo stato manuale
+// e il funnel non si sblocca da solo (caso reale: lead spostato a settimana prossima che doveva
+// tornare pending ma restava confermato e spariva dalla vista pending). Riusa INTERAMENTE
+// setLeadStatus: ricalcola forCreatedISO con getLeadCreatedISO sull'appuntamento corrente, salva su
+// STORAGE_KEYS.LEAD_STATUS, re-render e sync foglio. NON tocca lo storico checklist
+// (leadChecklistState / leadChecklistTimes, su storage SEPARATO da LEAD_STATUS): si resetta SOLO lo
+// stato conferma, i firstCheckedAt congelati restano intatti.
+async function resetLeadFunnel(leadKey) {
+    await setLeadStatus(leadKey, 'pending');
+}
+window.resetLeadFunnel = resetLeadFunnel;
+
 // Persiste gli agganci manuali su Drive (stesso meccanismo dei dati lead).
 async function saveLeadBindings() {
     if (window.DriveStorage && window.accessToken) {
@@ -2027,6 +2041,13 @@ function ensureLeadDelegation(listContainer) {
         if (statusBtn && listContainer.contains(statusBtn)) {
             const leadKey = decodeURIComponent(statusBtn.dataset.leadKey);
             setLeadStatus(leadKey, statusBtn.dataset.leadStatus);
+            return;
+        }
+        // v2.5.80: "🔄 Riavvia funnel" (visibile solo a funnel congelato) → rimette il lead in pending.
+        const resetFunnelBtn = e.target.closest && e.target.closest('[data-lead-funnel-reset]');
+        if (resetFunnelBtn && listContainer.contains(resetFunnelBtn)) {
+            const leadKey = decodeURIComponent(resetFunnelBtn.dataset.leadFunnelReset);
+            resetLeadFunnel(leadKey);
             return;
         }
         const btn = e.target.closest && e.target.closest('[data-lead-action]');
@@ -2496,11 +2517,18 @@ function buildLeadCardHtml(lead, leadStatus) {
     // Solo "Pending" tiene il funnel attivo (e fa partire le mail); Confermato e No lo congelano.
     const statusBtn = (val, icon, label) =>
         `<button type="button" class="lead-status-btn lead-status-${val}${leadStatus === val ? ' active' : ''}" data-lead-status="${val}" data-lead-key="${keyAttr}" aria-pressed="${leadStatus === val}">${icon} ${label}</button>`;
+    // v2.5.80: "🔄 Riavvia funnel" — visibile SOLO a funnel congelato (leadStatus !== 'pending').
+    // Rimette il lead in pending (vedi resetLeadFunnel) quando lo stato manuale non si resetta da solo
+    // (es. evento SPOSTATO: createdISO invariato → resta Confermato/No).
+    const resetFunnelBtn = leadStatus !== 'pending'
+        ? `<button type="button" class="lead-status-btn lead-funnel-restart" data-lead-funnel-reset="${keyAttr}" title="Rimetti il lead in pending: fa ripartire il funnel di conferma per l'appuntamento corrente">🔄 Riavvia funnel</button>`
+        : '';
     const statusControlHtml = `
             <div class="lead-status-control" role="group" aria-label="Stato conferma lead">
                 ${statusBtn('confermato', '✅', 'Confermato')}
                 ${statusBtn('pending', '🕒', 'Pending')}
                 ${statusBtn('no', '✖️', 'No')}
+                ${resetFunnelBtn}
             </div>`;
 
     // v2.5.63/74: giorno+ora dell'APPUNTAMENTO (t0 = start evento "LEAD - Call" o orario a mano),

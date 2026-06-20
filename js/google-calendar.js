@@ -1100,70 +1100,11 @@ function fillFormFromEvent(event) {
     document.getElementById('orario').value = orarioValue;
     console.log('⏰ [v2.5.34] Orario impostato:', orarioValue, { hours, minutes });
     
-    // 🆕 v2.5.33: Mostra bottone Google Meet SEMPRE + Check COMPLETO Meet
-    // Check TUTTI i formati possibili per Meet:
-    // 1. hangoutLink (legacy)
-    // 2. conferenceData.entryPoints[].uri (nuovo)
-    // 3. conferenceData.conferenceId (fallback)
-    // 4. descrizione contiene "meet.google.com" (fallback sicuro)
-    const hasMeetLegacy = !!event.hangoutLink;
-    const hasMeetNew = !!(event.conferenceData && event.conferenceData.entryPoints && 
-                         event.conferenceData.entryPoints.find(ep => ep.entryPointType === 'video'));
-    const hasMeetId = !!(event.conferenceData && event.conferenceData.conferenceId);
-    const hasMeetInDescription = !!(event.description && event.description.includes('meet.google.com'));
-    
-    const meetLink = event.hangoutLink || 
-                   (event.conferenceData?.entryPoints?.find(ep => ep.entryPointType === 'video')?.uri) ||
-                   (hasMeetInDescription ? event.description.match(/https:\/\/meet\.google\.com\/[a-z\-]+/)?.[0] : null);
-    
-    const hasMeet = hasMeetLegacy || hasMeetNew || hasMeetId || hasMeetInDescription;
-    
-    console.log('🔍 [v2.5.33] DEBUG Meet check:', { 
-        hasMeetLegacy, 
-        hasMeetNew, 
-        hasMeetId, 
-        hasMeetInDescription,
-        hasMeet,
-        meetLink,
-        eventId: event.id
-    });
-    
-    const meetContainer = document.getElementById('googleMeetContainer');
-    if (meetContainer) {
-        if (hasMeet && meetLink) {
-            // Meet esiste → link verde
-            meetContainer.innerHTML = `
-                <div class="google-meet-link">
-                    <a href="${meetLink}" target="_blank" class="btn-meet">
-                        <i class="fas fa-video"></i> Apri Google Meet
-                    </a>
-                    <button type="button" onclick="copyMeetLink('${meetLink}')" class="btn-meet btn-meet-copy" title="Copia solo il link Meet (pulito, per il cliente)">
-                        <i class="fas fa-copy"></i> Copia link Meet
-                    </button>
-                </div>
-            `;
-            meetContainer.style.display = 'block';
-            console.log('📹 [v2.5.33] Google Meet disponibile:', meetLink);
-        } else if (hasMeet && !meetLink) {
-            // Meet ID presente ma link mancante → nascondi bottone
-            meetContainer.style.display = 'none';
-            console.warn('⚠️ [v2.5.33] Meet presente ma link non trovato, bottone nascosto');
-        } else {
-            // Meet NON esiste → bottone blu "+ Aggiungi Meet"
-            meetContainer.innerHTML = `
-                <div class="google-meet-link">
-                    <button onclick="addMeetToEventFromForm('${event.id}', '${event.calendarId || 'primary'}')" 
-                            class="btn-meet btn-meet-add" 
-                            id="addMeetBtnForm">
-                        <i class="fas fa-video"></i> + Aggiungi Meet
-                    </button>
-                </div>
-            `;
-            meetContainer.style.display = 'block';
-            console.log('📹 [v2.5.33] Bottone "+ Aggiungi Meet" mostrato (evento senza Meet)');
-        }
-    }
-    
+    // v2.5.80: rimossi i 3 bottoni Meet UI (Apri/Copia/+Aggiungi) che popolavano #googleMeetContainer.
+    // Il Meet ora si crea da solo a "genera/invia messaggio" (ensureMeetOnEvent in addWhatsAppLinkToEvent)
+    // e finisce nella riga "🎥 Google Meet" della descrizione. I bottoni Meet sulle card calendario
+    // (lista eventi Home) restano (addMeetToEvent / copyMeetLink).
+
     // 🆕 v2.5.46: imposta la modalità videochiamata leggendo l'evento.
     // Regola: nell'evento i setter scrivono "Tipo di call: Whatsapp/Link".
     // Se contiene "whatsapp" → WA, qualsiasi altra cosa (o riga assente) → LINK.
@@ -1461,6 +1402,46 @@ function extractMeetLink(ev) {
 }
 window.extractMeetLink = extractMeetLink;
 
+// ===== v2.5.80: CREA (SE MANCA) LA CONFERENZA GOOGLE MEET SU UN EVENTO =====
+// Helper RIUSABILE estratto dalla logica di addMeetToEvent: fa una events.patch con
+// conferenceDataVersion:1 e conferenceData.createRequest (requestId univoco, hangoutsMeet) e ritorna
+// il link Meet. Google può generare il link in modo ASINCRONO: se al primo giro è vuoto, fa UN solo
+// retry con events.get dopo un breve delay; se ancora vuoto ritorna '' (il chiamante prosegue senza
+// riga Meet, niente blocco). NON modifica descrizione né UI: è solo "assicura il Meet, dammi il link".
+// Pensato per il flusso "genera/invia messaggio" (addWhatsAppLinkToEvent); addMeetToEvent resta per
+// le card calendario con tutta la sua UI (bottoni/toast/localStorage).
+async function ensureMeetOnEvent(eventId, calendarId) {
+    if (!window.gapi?.client?.calendar) return '';
+    const calId = calendarId || 'primary';
+    try {
+        // requestId univoco col timestamp per evitare 400 su retry (stesso schema di addMeetToEvent)
+        const requestId = eventId.replace(/[^a-z0-9]/gi, '') + Date.now();
+        const response = await window.gapi.client.calendar.events.patch({
+            calendarId: calId,
+            eventId: eventId,
+            conferenceDataVersion: 1,
+            resource: {
+                conferenceData: {
+                    createRequest: {
+                        requestId: requestId,
+                        conferenceSolutionKey: { type: 'hangoutsMeet' }
+                    }
+                }
+            }
+        });
+        let link = extractMeetLink(response.result);
+        if (link) return link;
+        // Link non ancora pronto → singolo retry dopo un breve delay (Google lo genera async).
+        await new Promise(r => setTimeout(r, 1500));
+        const r2 = await window.gapi.client.calendar.events.get({ calendarId: calId, eventId });
+        return extractMeetLink(r2.result) || '';
+    } catch (e) {
+        console.warn('⚠️ [v2.5.80] Creazione Meet automatica fallita (proseguo senza riga Meet):', e.message);
+        return '';
+    }
+}
+window.ensureMeetOnEvent = ensureMeetOnEvent;
+
 // ===== v2.5.24: AGGIUNGI LINK WHATSAPP NELLA DESCRIZIONE EVENTO =====
 // ===== v2.5.27: RINOMINA EVENTO CON SOLO NOME COGNOME =====
 // ===== v2.5.31: FIX - Rename SEMPRE attivo (anche eventi già esistenti) =====
@@ -1505,7 +1486,15 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
             eventId: eventId
         });
         
-        const currentDescription = event.result.description || '';
+        // v2.5.80 (FIX 3): Acuity Scheduling appende a fine descrizione un blocco
+        // "Change Appointment: <url> … (created by Acuity Scheduling) AcuityID=…". Lo tagliamo da
+        // "Change Appointment" in poi (case-insensitive, fino a fine stringa) PRIMA di riusare la
+        // descrizione nei rami sotto, così non viene mai riappeso. Idempotente: se non c'è il blocco la
+        // regex non fa nulla. hadAcuityBlock = la pulizia ha tolto qualcosa → serve a forzare il
+        // salvataggio anche su eventi vecchi che hanno già tutte le righe (vedi 3° ramo più sotto).
+        const rawDescription = event.result.description || '';
+        const currentDescription = rawDescription.replace(/\s*Change Appointment:[\s\S]*$/i, '').trim();
+        const hadAcuityBlock = currentDescription !== rawDescription.trim();
 
         // v2.5.64: link diretto alla scheda lead nell'app (?id=Lxxxx). Solo se ho il codice (niente
         // link rotti se leadCode manca). origin+pathname reali → funziona su qualsiasi dominio/host.
@@ -1514,7 +1503,14 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
 
         // v2.5.78: link Google Meet (se l'evento ce l'ha) → riga "🎥 Google Meet" nel blocco,
         // così Dante copia/incolla al cliente in un colpo solo (numero, WhatsApp, scheda, Meet).
-        const meetLink = extractMeetLink(event.result);
+        // v2.5.80 (FIX 2): a "genera/invia messaggio" se l'evento NON ha ancora un Meet lo CREIAMO
+        // automaticamente (prima lo si faceva a mano coi 3 bottoni sotto la tendina, ora rimossi).
+        // Se Google tarda a generare il link ensureMeetOnEvent ritorna '' e proseguiamo senza la riga
+        // Meet, senza bloccare titolo/WhatsApp/scheda.
+        let meetLink = extractMeetLink(event.result);
+        if (!meetLink) {
+            meetLink = await ensureMeetOnEvent(eventId, calId);
+        }
         const meetLine = meetLink ? `🎥 Google Meet: ${meetLink}` : '';
 
         // 2. Controlla cosa manca già nella descrizione
@@ -1553,6 +1549,12 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
             if (needsMeetLink && meetLine) lines.push(meetLine);
             updates.description = lines.join('\n') + '\n' + currentDescription;
             console.log('📂 [v2.5.78] Righe aggiunte a evento esistente:', lines);
+        } else if (hadAcuityBlock) {
+            // v2.5.80 (FIX 3): nessuna riga nuova da aggiungere ma c'era il blocco Acuity in coda →
+            // riscrivo la descrizione ripulita, così sparisce anche dagli eventi GIÀ completi di righe
+            // (WhatsApp/scheda/Meet presenti), che altrimenti non verrebbero mai ri-salvati.
+            updates.description = currentDescription;
+            console.log('🧹 [v2.5.80] Blocco Acuity rimosso dalla descrizione');
         }
 
         if (needsTitleUpdate) {
@@ -2089,39 +2091,9 @@ async function addMeetToEvent(eventId, calendarId, btnEl) {
     }
 }
 
-// ===== v2.5.30: WRAPPER PER AGGIUNGERE MEET DAL FORM =====
-async function addMeetToEventFromForm(eventId, calendarId) {
-    const btn = document.getElementById('addMeetBtnForm');
-    
-    // Chiama la funzione esistente
-    await addMeetToEvent(eventId, calendarId, btn);
-    
-    // Dopo 3.5 secondi, ricarica evento per aggiornare form con Meet appena creato
-    setTimeout(async () => {
-        try {
-            if (window.accessToken && gapi?.client?.calendar) {
-                const response = await gapi.client.calendar.events.get({
-                    calendarId: calendarId,
-                    eventId: eventId
-                });
-                
-                // Aggiorna localStorage
-                const saved = JSON.parse(localStorage.getItem(STORAGE_KEYS_CALENDAR.CALENDAR_EVENTS) || '[]');
-                const idx = saved.findIndex(e => e.id === eventId);
-                if (idx >= 0) {
-                    saved[idx] = response.result;
-                    localStorage.setItem(STORAGE_KEYS_CALENDAR.CALENDAR_EVENTS, JSON.stringify(saved));
-                }
-                
-                // Ri-popola il form con evento aggiornato
-                fillFormFromEvent(response.result);
-                console.log('✅ Form aggiornato con Meet appena creato');
-            }
-        } catch (e) {
-            console.warn('⚠️ Non riesco ad aggiornare form:', e);
-        }
-    }, 3500);
-}
+// v2.5.80: rimossa addMeetToEventFromForm (wrapper "+ Aggiungi Meet" del form) — orfana dopo la
+// rimozione dei bottoni Meet UI sotto la tendina lead. Il Meet ora si crea da solo a "genera/invia
+// messaggio" (ensureMeetOnEvent). Resta addMeetToEvent per le card calendario.
 
 // ===== v2.5.78: METTE IL LINK MEET NELLA DESCRIZIONE (blocco contatti) =====
 // Chiamata appena creato un Meet: aggiunge "🎥 Google Meet: <url>" in cima alla descrizione,
@@ -2191,6 +2163,5 @@ window.renderCalendarCheckboxes = renderCalendarCheckboxes;
 window.markLeadAsContacted = markLeadAsContacted;
 window.loadSavedEvents = loadSavedEvents; // v2.5.7: Export per caricare da cache
 window.addMeetToEvent = addMeetToEvent; // v2.5.23: Aggiungi Google Meet a evento
-window.addMeetToEventFromForm = addMeetToEventFromForm; // v2.5.30: Wrapper per form
 
 console.log('✅ Google Calendar module v2.5.34 caricato - HOTFIX ORARIO/GIORNO');
