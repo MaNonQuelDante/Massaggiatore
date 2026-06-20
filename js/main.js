@@ -557,7 +557,24 @@ async function updatePreview() {
     const TT = getSalutoFinale();
     const OPERATORE = operatore;
     const SERVIZIO = servizio;
-    
+
+    // 🆕 v2.5.79: {URL} = link Google Meet del lead selezionato. L'option di #selectLead porta
+    // dataset.eventData = JSON dell'evento Calendar (vedi google-calendar.js); da lì window.extractMeetLink
+    // pesca il Meet (hangoutLink / conferenceData / descrizione). Vale per TUTTI i template (non solo
+    // 'link_meet'), così è riusabile. Se non c'è lead/Meet → placeholder esplicito.
+    let URL_MEET = '[seleziona un lead con Meet]';
+    try {
+        const selLead = document.getElementById('selectLead');
+        const opt = selLead && selLead.selectedOptions && selLead.selectedOptions[0];
+        if (opt && opt.dataset && opt.dataset.eventData) {
+            const ev = JSON.parse(opt.dataset.eventData);
+            const link = (typeof window.extractMeetLink === 'function') ? window.extractMeetLink(ev) : '';
+            if (link) URL_MEET = link;
+        }
+    } catch (e) {
+        console.warn('⚠️ {URL} Meet: impossibile leggere il link dal lead selezionato', e);
+    }
+
     let messaggio = template.testo;
     messaggio = messaggio.replace(/{BB}/g, BB);
     messaggio = messaggio.replace(/{NN}/g, NN);
@@ -568,7 +585,8 @@ async function updatePreview() {
     messaggio = messaggio.replace(/{TT}/g, TT);
     messaggio = messaggio.replace(/{OPERATORE}/g, OPERATORE);
     messaggio = messaggio.replace(/{SERVIZIO}/g, SERVIZIO);
-    
+    messaggio = messaggio.replace(/{URL}/g, URL_MEET);
+
     preview.value = messaggio;
 }
 
@@ -2233,8 +2251,33 @@ async function loadLeadSection() {
         }
     }
 
+    // v2.5.79: NON RETROATTIVO — nelle SCHEDE mostriamo SOLO i lead con appuntamento dal giorno
+    // corrente in poi (>= mezzanotte locale di oggi). I lead con appuntamento passato spariscono dalle
+    // card (la roba vecchia non serve). NON tocchiamo: la tendina #selectLead (filtrata per giorno a
+    // parte in google-calendar.js), il mirror del funnel sul foglio (usa `leads` completo qui sotto)
+    // né il cutoff dell'Apps Script. Un lead SENZA data appuntamento risolvibile (es. messaggio manuale
+    // senza evento) viene TENUTO: non è "vecchio", semplicemente non ha una data su cui filtrare.
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const leadAppuntamentoNonPassato = (lead) => {
+        let t0 = null;
+        try {
+            const r = resolveLeadT0(lead, leadSectionCandidates, leadBindings[lead._key]);
+            t0 = (r && r.t0) ? r.t0 : null;
+        } catch (e) { /* best-effort: in dubbio, mostro */ }
+        if (!t0 || isNaN(t0.getTime())) return true;
+        return t0 >= startOfToday;
+    };
+    const leadsVisibili = leads.filter(leadAppuntamentoNonPassato);
+    const leadVecchiNascosti = leads.length - leadsVisibili.length;
+    if (leadVecchiNascosti > 0) {
+        console.log(`🗓️ [Lead] ${leadVecchiNascosti} lead con appuntamento precedente a oggi nascosti dalle schede (non retroattivo, v2.5.79)`);
+    }
+
     // Tieni i dati in memoria e renderizza (i re-render successivi NON riscaricano da Drive).
-    leadSectionLeads = leads;
+    // Le SCHEDE usano la lista filtrata (solo da oggi in poi); il mirror del funnel sotto usa `leads`
+    // completo, così l'Apps Script/foglio non cambia comportamento.
+    leadSectionLeads = leadsVisibili;
     leadDataCacheAt = Date.now(); // v2.5.76 PERF: load completo riuscito → cache valida per LEAD_DATA_TTL_MS
     renderLeadList();
 
@@ -2704,6 +2747,15 @@ async function loadTemplates() {
                 nome: 'Riscontro',
                 categoria: 'Promemoria',
                 testo: '{BB} {NN}. Cortesemente, puoi darmi riscontro?'
+            },
+            // v2.5.79: template "Link Meet". Prima riga = SOLO l'URL del Google Meet del lead
+            // selezionato (segnaposto {URL}, risolto in updatePreview da window.extractMeetLink
+            // sull'evento Calendar del lead in #selectLead), poi il testo.
+            {
+                id: 'link_meet',
+                nome: 'Link Meet',
+                categoria: 'Promemoria',
+                testo: '{URL}\nEccoci {NN}, ti lascio intanto il link. A tra poco'
             }
         ];
         templates = defaultTemplates;
@@ -2736,7 +2788,22 @@ async function loadTemplates() {
         localStorage.setItem('sgmess_templates_local', JSON.stringify(templates));
         console.log('✅ Memo del Giorno aggiunto');
     }
-    
+
+    // v2.5.79: se manca il template "Link Meet" (localStorage di una versione precedente), lo aggiungo
+    // senza dover resettare a mano. Oggi il reset forzato qui sopra lo ricrea già dai default, ma questo
+    // blocco lo rende robusto anche se in futuro il reset venisse tolto.
+    if (templates.length > 0 && !templates.find(t => t.id === 'link_meet')) {
+        console.log('🔄 Aggiornamento: aggiungo Link Meet...');
+        templates.push({
+            id: 'link_meet',
+            nome: 'Link Meet',
+            categoria: 'Promemoria',
+            testo: '{URL}\nEccoci {NN}, ti lascio intanto il link. A tra poco'
+        });
+        localStorage.setItem('sgmess_templates_local', JSON.stringify(templates));
+        console.log('✅ Link Meet aggiunto');
+    }
+
     // Popola dropdown
     const select = document.getElementById('tipoMessaggio');
     if (!select) {
