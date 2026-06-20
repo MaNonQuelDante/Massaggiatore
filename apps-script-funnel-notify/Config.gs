@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Config.gs
- * v1.0.0 (introdotto con TESTmess v2.5.66)
+ * v1.3.0 (introdotto con TESTmess v2.5.66)
  *
  * Notifiche automatiche legate al funnel dei lead ("LEAD - Call"). Gira come Google
  * Apps Script autonomo (browser chiuso) su trigger ogni 5 minuti. Per ora invia EMAIL;
@@ -8,6 +8,14 @@
  * scheduling e anti-duplicato.
  *
  * SEPARATO dall'Apps Script Twilio (apps-script-reminder/): quello NON si tocca.
+ *
+ * CHANGELOG v1.3.0 (TESTmess v2.5.81):
+ * - ✉️ EMAIL: oggetto "Nome Cognome - <step>" (mappa step in Notifiers.gs), corpo ripulito
+ *      (via "(creazione evento)"/"(call)" e la riga esplicativa dello stamp). Vedi Notifiers.gs.
+ * - ✨ EVENTO auto-arricchito all'ingresso (Scheduler.gs: arricchisciEventoFunnel_): blocco
+ *      contatti in descrizione (📱 WhatsApp / 📞 Chiama / 📂 Scheda lead, usa APP_BASE_URL) +
+ *      titolo "Nome Cognome". Server-side, browser chiuso, una volta sola per evento. Meet escluso.
+ * - ⚠️ Richiede REDEPLOY manuale (copia i .gs aggiornati nell'editor di script.google.com).
  *
  * CHANGELOG v1.2.0 (TESTmess v2.5.72):
  * - 🆕 Stamp di INGRESSO (h=0): appena il lead entra (evento creato) parte la mail "nuovo lead

@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Scheduler.gs
- * v1.0.0
+ * v1.1.0 (TESTmess v2.5.81)
  *
  * Cuore del sistema. Il trigger ogni 5 minuti chiama checkFunnelNotifications():
  * scorre gli eventi "LEAD - Call", per ogni stamp dovuto (e non confermato/non già
@@ -8,6 +8,16 @@
  *
  * Anti-duplicato: PropertiesService, chiave 'sent_<notifierId>_<eventId>_<stampKey>'
  * (prefisso DISTINTO dal Twilio 'notified_', così i due Apps Script non si pestano).
+ *
+ * CHANGELOG v1.1.0 (TESTmess v2.5.81):
+ * - ✨ ARRICCHIMENTO EVENTO server-side (arricchisciEventoFunnel_): all'INGRESSO del lead (stamp
+ *      h=0), a browser chiuso, inietta in cima alla descrizione il blocco contatti
+ *      (📱 WhatsApp / 📞 Chiama / 📂 Scheda lead) e rinomina il titolo grezzo ("LEAD - Call"/
+ *      "FOLLOWUP") in "Nome Cognome" (Title Case). Replica ciò che il front-end fa a
+ *      "genera/invia messaggio" (js/google-calendar.js), ma senza dipendere dal token OAuth che
+ *      scade. UNA volta sola per evento (flag 'enriched_<eventId>'). Isolato in try/catch: un suo
+ *      errore NON blocca l'invio dell'email. NON tocca il Meet (richiede l'Advanced Calendar
+ *      Service / conferenceData → round separato).
  */
 
 // ===== TRIGGER PRINCIPALE (ogni 5 minuti) =====
@@ -98,6 +108,13 @@ function processaEventoFunnel_(ev, props, nowMs, dryRun) {
     if (nowMs < sogliaMs) continue;                         // non ancora dovuto
     var stale = nowMs > sogliaMs + CONFIG.TOLLERANZA_MS;    // troppo in ritardo (>3h)
 
+    // ✨ v2.5.81: all'INGRESSO (h=0) e su evento "fresco" (non stale), oltre alla mail arricchiamo
+    // l'evento server-side (blocco contatti + rename titolo). UNA volta sola (flag 'enriched_…').
+    // Isolato in try/catch dentro la funzione: NON blocca l'invio dell'email. dryRun → non tocca.
+    if (stamp.key === 'ingresso' && !stale && !dryRun) {
+      arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs);
+    }
+
     var lead = null; // costruito una sola volta, solo se serve
 
     for (var n = 0; n < NOTIFIERS.length; n++) {
@@ -152,6 +169,100 @@ function buildLeadFromEvent_(ev, t0, apptStart, telefono, rec) {
     code: code,
     eventId: ev.getId()
   };
+}
+
+// ===== ✨ v2.5.81: ARRICCHIMENTO EVENTO server-side (blocco contatti + rename titolo) =====
+// Replica, a browser chiuso, ciò che il front-end fa a "genera/invia messaggio"
+// (js/google-calendar.js: addWhatsAppLinkToEvent / ensureEventTitleCorrect): inietta in cima alla
+// descrizione il blocco contatti (WhatsApp, Chiama, Scheda lead) e rinomina il titolo grezzo
+// ("LEAD - Call"/"FOLLOWUP") in "Nome Cognome". Gira all'INGRESSO (stamp h=0), UNA volta sola per
+// evento (flag 'enriched_<eventId>' su PropertiesService). NON tocca il Meet (richiede l'Advanced
+// Calendar Service / conferenceData → round separato). try/catch: un errore NON blocca l'email.
+function arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs) {
+  var flagKey = 'enriched_' + ev.getId();
+  if (props.getProperty(flagKey)) return;   // già arricchito: non rifare a ogni giro dei 5'
+
+  try {
+    var desc = ev.getDescription() || '';
+    var righeNuove = [];
+
+    // 📱 WhatsApp + 📞 Chiama: solo se ho il telefono e nella descrizione non c'è già un "wa.me/".
+    // Normalizzazione IDENTICA al front-end: via spazi e "+", e ai numeri locali a 10 cifre antepongo 39.
+    if (telefono && desc.indexOf('wa.me/') === -1) {
+      var phoneClean = String(telefono).replace(/\s+/g, '').replace(/^\+/, '');
+      if (phoneClean.indexOf('39') !== 0 && phoneClean.length === 10) phoneClean = '39' + phoneClean;
+      righeNuove.push('📱 WhatsApp: https://wa.me/' + phoneClean);
+      righeNuove.push('📞 Chiama: tel:+' + phoneClean);
+    }
+
+    // 📂 Scheda lead: deep-link ?id=<codice> se il lead è già nel foglio, altrimenti URL base nudo
+    // (stesso fallback dell'email). Idempotente: salto se la riga "📂 Scheda lead" c'è già.
+    if (desc.indexOf('📂 Scheda lead') === -1) {
+      var code = (rec && rec.codice) ? rec.codice : '';
+      var appLink = code ? (CONFIG.APP_BASE_URL + '?id=' + encodeURIComponent(code)) : CONFIG.APP_BASE_URL;
+      righeNuove.push('📂 Scheda lead: ' + appLink);
+    }
+
+    var nuovoDesc = desc;
+    if (righeNuove.length) nuovoDesc = righeNuove.join('\n') + (desc ? '\n\n' + desc : '');
+
+    // ✏️ Rename titolo → "Nome Cognome" (Title Case). Lo step NON va nel titolo dell'evento: vive
+    // solo nell'oggetto dell'email (scelta confermata). Nome: rec.nome (dal foglio) è la fonte
+    // autorevole; se manca, ripulisco il titolo dell'evento ("NOME: servizio" → "NOME") ma SOLO se
+    // non è un token grezzo (non rinomino "LEAD - Call"/"FOLLOWUP" in "Lead"/"Followup").
+    var titoloAttuale = (ev.getTitle() || '').trim();
+    var nomeBase = (rec && rec.nome) ? rec.nome.trim() : '';
+    if (!nomeBase) {
+      var pulito = _nomePulitoFunnel_(titoloAttuale);
+      if (!_isTitoloGrezzoFunnel_(pulito)) nomeBase = pulito;
+    }
+    var nuovoTitolo = '';
+    if (nomeBase) {
+      var tc = _titleCaseFunnel_(nomeBase);
+      if (tc && tc !== titoloAttuale) nuovoTitolo = tc;
+    }
+
+    var cambiato = false;
+    if (nuovoDesc !== desc) { ev.setDescription(nuovoDesc); cambiato = true; }
+    if (nuovoTitolo)        { ev.setTitle(nuovoTitolo);     cambiato = true; }
+
+    // Marca SEMPRE come arricchito (anche se non c'era nulla da aggiungere): non riprovo a ogni giro.
+    props.setProperty(flagKey, String(nowMs));
+    Logger.log('✨ [enrich] "%s": +%s righe contatti%s', titoloAttuale, righeNuove.length,
+               nuovoTitolo ? (' → titolo "' + nuovoTitolo + '"') : (cambiato ? '' : ' (niente da fare)'));
+  } catch (e) {
+    // Isolato di proposito: l'email parte comunque. NON marco il flag → ritento al prossimo giro.
+    Logger.log('❌ [enrich] arricchimento fallito (email NON bloccata): %s', e);
+  }
+}
+
+// Ripulisce un titolo evento per estrarne il nome (stesse regole di ensureEventTitleCorrect):
+// taglia dopo ":" e dopo " - ", rimuove le parentesi. "ARTURO ALVARI: Finanza" → "ARTURO ALVARI".
+function _nomePulitoFunnel_(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  if (s.indexOf(':') !== -1)   s = s.split(':')[0].trim();      // "NOME: servizio" → "NOME"
+  if (s.indexOf(' - ') !== -1) s = s.split(' - ')[0].trim();    // "Nome - SG Lead" → "Nome"
+  s = s.replace(/\s*\([^)]*\)/g, '').trim();                    // "Nome (nota)" → "Nome"
+  return s;
+}
+
+// True se la stringa è un "token grezzo" del funnel (non un nome di persona) → non rinominare.
+function _isTitoloGrezzoFunnel_(s) {
+  var t = String(s || '').trim().toLowerCase();
+  if (!t) return true;
+  if (t === 'lead' || t === 'call' || t === 'lead - call') return true;
+  return t.indexOf('followup') !== -1 || t.indexOf('follow up') !== -1 || t.indexOf('follow-up') !== -1;
+}
+
+// Title Case "alla front-end" (toTitleCaseNome): minuscolo + iniziale maiuscola a inizio parola e
+// dopo spazio/apostrofo/trattino. Mantiene gli accenti. "mario rossi" → "Mario Rossi".
+function _titleCaseFunnel_(s) {
+  return String(s == null ? '' : s)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/(^|[\s'’\-])([a-zà-ÿ])/g, function (m, sep, ch) { return sep + ch.toUpperCase(); });
 }
 
 // ===== v2.5.67: T0 = CREAZIONE evento (ingresso). createdISO dal foglio → getDateCreated() → start =====

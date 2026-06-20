@@ -1,6 +1,15 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Notifiers.gs
- * v1.0.0
+ * v1.3.0 (TESTmess v2.5.81)
+ *
+ * CHANGELOG v1.3.0 (TESTmess v2.5.81):
+ * - ✉️ OGGETTO email = "Nome Cognome - <step>" (niente più prefisso "[Massaggiatore]" né emoji).
+ *      Lo <step> dipende dallo stamp (mappa EMAIL_STEP_LABELS): ingresso→"Appena entrato",
+ *      scrivere→"Manda primo messaggio", sollecitare→"Manda sollecito", chiamata→"Chiama".
+ * - 🧹 CORPO email più pulito: via le parentesi "(creazione evento)" e "(call)", rimossa la riga
+ *      esplicativa "🆕 Ingresso lead registrato (T0)." / "⏰ Stamp raggiunto…".
+ * - 🔤 Nome ripulito + Title Case anche nell'oggetto/riga Lead (riusa _nomePulitoFunnel_ /
+ *      _titleCaseFunnel_ di Scheduler.gs, stesso progetto Apps Script).
  *
  * Notifier intercambiabili. Ognuno espone la stessa interfaccia:
  *   { id: String, isEnabled(): Boolean, send(lead, stamp): Boolean }
@@ -14,6 +23,15 @@
  * stamp = { key, h, label }   (es. { key:'scrivere', h:2, label:'Scrivere al lead' })
  */
 
+// v2.5.81: mappa stamp.key → "step" mostrato nell'oggetto email ("Nome Cognome - <step>").
+// Fallback a stamp.label per chiavi sconosciute (vedi send()).
+var EMAIL_STEP_LABELS = {
+  ingresso:    'Appena entrato',
+  scrivere:    'Manda primo messaggio',
+  sollecitare: 'Manda sollecito',
+  chiamata:    'Chiama'
+};
+
 // ===== 📧 EMAIL (attivo) =====
 var EmailNotifier = {
   id: 'email',
@@ -25,22 +43,27 @@ var EmailNotifier = {
   send: function (lead, stamp) {
     // v2.5.72: lo stamp 'ingresso' (h=0) è la mail "nuovo lead entrato" → copia dedicata.
     var isIngresso = stamp.key === 'ingresso';
-    var oggetto = isIngresso
-      ? '[Massaggiatore] 🆕 Nuovo lead entrato · ' + (lead.nome || 'Lead')
-      : '[Massaggiatore] Stamp T+' + stamp.h + 'h · ' + (lead.nome || 'Lead');
+
+    // v2.5.81: nome ripulito + Title Case ("ARTURO ALVARI: Finanza" → "Arturo Alvari").
+    // _nomePulitoFunnel_/_titleCaseFunnel_ vivono in Scheduler.gs (stesso progetto Apps Script).
+    var nome = _titleCaseFunnel_(_nomePulitoFunnel_(lead.nome || '')) || (lead.nome || '');
+
+    // v2.5.81: oggetto = "Nome Cognome - <step>". Niente prefisso "[Massaggiatore]" né emoji.
+    var step = EMAIL_STEP_LABELS[stamp.key] || stamp.label;
+    var oggetto = (nome || 'Lead') + ' - ' + step;
 
     var righe = [];
     righe.push(isIngresso
       ? 'È entrato un nuovo lead (evento creato in calendario).'
       : 'È scaduto uno stamp del funnel per questo lead.');
     righe.push('');
-    righe.push('👤 Lead: ' + (lead.nome || '(senza nome)'));
+    righe.push('👤 Lead: ' + (nome || '(senza nome)'));
     if (lead.telefono) righe.push('📞 Telefono: ' + lead.telefono);
-    righe.push('🕒 Ingresso lead (creazione evento): ' + FunnelNotify_fmtDataIt(lead.t0));
-    if (lead.apptStart) righe.push('📅 Appuntamento (call): ' + FunnelNotify_fmtDataIt(lead.apptStart));
-    righe.push(isIngresso
-      ? '🆕 Ingresso lead registrato (T0).'
-      : '⏰ Stamp raggiunto: T+' + stamp.h + 'h dall\'ingresso — ' + stamp.label);
+    // v2.5.81: via la parentesi "(creazione evento)".
+    righe.push('🕒 Ingresso lead: ' + FunnelNotify_fmtDataIt(lead.t0));
+    // v2.5.81: via la parentesi "(call)".
+    if (lead.apptStart) righe.push('📅 Appuntamento: ' + FunnelNotify_fmtDataIt(lead.apptStart));
+    // v2.5.81: rimossa la riga esplicativa "🆕 Ingresso lead registrato (T0)." / "⏰ Stamp raggiunto…".
     righe.push('');
     if (lead.eventLink) righe.push('📅 Evento calendario: ' + lead.eventLink);
     if (lead.appLink)   righe.push('📂 Scheda lead: ' + lead.appLink);
