@@ -1449,9 +1449,22 @@ async function markLeadAsContacted(eventId, nome, cognome, telefono, eventDate, 
     }
 }
 
+// ===== v2.5.78: ESTRAE IL LINK GOOGLE MEET DA UN EVENTO =====
+// Cerca nei posti possibili: hangoutLink (legacy), conferenceData.entryPoints video (nuovo),
+// e come ultima spiaggia un meet.google.com già scritto nella descrizione. '' se non c'è Meet.
+function extractMeetLink(ev) {
+    if (!ev) return '';
+    return ev.hangoutLink ||
+        ev.conferenceData?.entryPoints?.find(ep => ep.entryPointType === 'video')?.uri ||
+        (ev.description ? (ev.description.match(/https:\/\/meet\.google\.com\/[a-z\-]+/i)?.[0] || '') : '') ||
+        '';
+}
+window.extractMeetLink = extractMeetLink;
+
 // ===== v2.5.24: AGGIUNGI LINK WHATSAPP NELLA DESCRIZIONE EVENTO =====
 // ===== v2.5.27: RINOMINA EVENTO CON SOLO NOME COGNOME =====
 // ===== v2.5.31: FIX - Rename SEMPRE attivo (anche eventi già esistenti) =====
+// ===== v2.5.78: + riga "🎥 Google Meet" nel blocco (copia/incolla al cliente) =====
 async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendarId, leadCode) {
     if (!window.gapi || !window.gapi.client || !window.gapi.client.calendar) {
         console.warn('⚠️ Google Calendar API non inizializzata');
@@ -1499,12 +1512,19 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         const appLink = leadCode ? `${window.location.origin}${window.location.pathname}?id=${leadCode}` : '';
         const schedaLine = appLink ? `📂 Scheda lead: ${appLink}` : '';
 
-        // 2. Controlla se link già presente
-        // v2.5.77: il link WhatsApp si aggiunge SOLO se ho il telefono. La riga scheda no:
-        // dipende solo da appLink (leadCode), così entra anche su lead senza numero.
+        // v2.5.78: link Google Meet (se l'evento ce l'ha) → riga "🎥 Google Meet" nel blocco,
+        // così Dante copia/incolla al cliente in un colpo solo (numero, WhatsApp, scheda, Meet).
+        const meetLink = extractMeetLink(event.result);
+        const meetLine = meetLink ? `🎥 Google Meet: ${meetLink}` : '';
+
+        // 2. Controlla cosa manca già nella descrizione
+        // v2.5.77: il link WhatsApp si aggiunge SOLO se ho il telefono. Scheda/Meet no:
+        // dipendono solo dall'avere il dato, così entrano anche su lead senza numero.
         const needsWhatsAppLink = hasPhone && !currentDescription.includes('wa.me/');
         // v2.5.64: anche eventi vecchi (già con wa.me ma SENZA ?id=) ricevono la riga scheda al passaggio.
         const needsLeadLink = !!appLink && !currentDescription.includes('?id=');
+        // v2.5.78: idem per il Meet — se l'evento ha un link e la descrizione non lo contiene.
+        const needsMeetLink = !!meetLink && !currentDescription.includes(meetLink);
 
         // 3. 🆕 v2.5.27: Calcola nuovo titolo evento (solo Nome Cognome)
         // v2.5.65: Title Case in SCRITTURA (no MAIUSCOLO) → "Dante Davide Ciavarella"
@@ -1518,17 +1538,21 @@ async function addWhatsAppLinkToEvent(eventId, telefono, nome, cognome, calendar
         const updates = {};
 
         if (needsWhatsAppLink) {
-            // 🆕 v2.5.33: link WhatsApp IN CIMA. 🆕 v2.5.64: + riga scheda lead (se ho il codice).
-            const block = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
-                (schedaLine ? '\n' + schedaLine : '');
-            const newDescription = block + (currentDescription ? '\n\n' + currentDescription : '');
-            updates.description = newDescription;
-            console.log('📱 [v2.5.64] WhatsApp + chiamata' + (schedaLine ? ' + scheda lead' : '') + ' in cima');
-        } else if (needsLeadLink) {
-            // v2.5.77: wa.me già presente OPPURE lead senza telefono: in entrambi i casi
-            // aggiungo SOLO la riga scheda in cima (idempotente, niente link rotti).
-            updates.description = schedaLine + '\n' + currentDescription;
-            console.log('📂 [v2.5.77] Aggiunta riga scheda lead (telefono ' + (hasPhone ? 'presente' : 'assente') + '):', appLink);
+            // 🆕 v2.5.78: primo inserimento del blocco contatti IN CIMA (WhatsApp + chiamata
+            // + scheda + Meet). Scheda/Meet solo se mancano davvero, per non duplicarle.
+            const lines = [`📱 WhatsApp: ${whatsappLink}`, `📞 Chiama: ${phoneLink}`];
+            if (needsLeadLink && schedaLine) lines.push(schedaLine);
+            if (needsMeetLink && meetLine) lines.push(meetLine);
+            updates.description = lines.join('\n') + (currentDescription ? '\n\n' + currentDescription : '');
+            console.log('📱 [v2.5.78] Blocco contatti in cima:', lines);
+        } else if (needsLeadLink || needsMeetLink) {
+            // v2.5.78: wa.me già presente (o lead senza telefono): aggiungo in cima SOLO le righe
+            // mancanti (scheda e/o Meet). Idempotente, niente duplicati.
+            const lines = [];
+            if (needsLeadLink && schedaLine) lines.push(schedaLine);
+            if (needsMeetLink && meetLine) lines.push(meetLine);
+            updates.description = lines.join('\n') + '\n' + currentDescription;
+            console.log('📂 [v2.5.78] Righe aggiunte a evento esistente:', lines);
         }
 
         if (needsTitleUpdate) {
@@ -1613,6 +1637,7 @@ async function ensureEventTitleCorrect(event) {
         const hasPhone = !!telefono;
         let whatsappNeedsUpdate = false;
         let leadLinkNeedsUpdate = false;
+        let meetLinkNeedsUpdate = false;
 
         // v2.5.64: codice ID lead (read-only dalla mappa in memoria popolata dalla sezione Lead /
         // da markLeadAsContacted). Qui NON creo codici nuovi: se non c'è ancora, salto la riga scheda
@@ -1624,22 +1649,28 @@ async function ensureEventTitleCorrect(event) {
         const appLink = leadCode ? `${window.location.origin}${window.location.pathname}?id=${leadCode}` : '';
         const schedaLine = appLink ? `📂 Scheda lead: ${appLink}` : '';
 
+        // v2.5.78: link Google Meet (dal cache; rifinito col dato fresco dopo il get).
+        let meetLink = extractMeetLink(event);
+
         // v2.5.77: leggo la descrizione UNA volta sola (prima c'erano DUE events.get ridondanti).
-        // La riga scheda non dipende più dal telefono: basta avere un appLink (codice lead).
+        // v2.5.78: fetch anche se c'è solo il Meet (oltre a telefono/scheda).
         let currentDescription = '';
-        if (hasPhone || appLink) {
+        if (hasPhone || appLink || meetLink) {
             const currentEvent = await window.gapi.client.calendar.events.get({
                 calendarId: event.calendarId || 'primary',
                 eventId: event.id
             });
             currentDescription = currentEvent.result.description || '';
+            meetLink = extractMeetLink(currentEvent.result) || meetLink;
             whatsappNeedsUpdate = hasPhone && !currentDescription.includes('wa.me/');
             leadLinkNeedsUpdate = !!appLink && !currentDescription.includes('?id=');
-            console.log('📱 [v2.5.77] Check descrizione:', { hasPhone, hasWa: !whatsappNeedsUpdate, needsScheda: leadLinkNeedsUpdate });
+            meetLinkNeedsUpdate = !!meetLink && !currentDescription.includes(meetLink);
+            console.log('📱 [v2.5.78] Check descrizione:', { hasPhone, hasWa: !whatsappNeedsUpdate, needsScheda: leadLinkNeedsUpdate, needsMeet: meetLinkNeedsUpdate });
         }
+        const meetLine = meetLink ? `🎥 Google Meet: ${meetLink}` : '';
 
         // Se nulla da aggiornare, skip
-        if (!titleNeedsUpdate && !whatsappNeedsUpdate && !leadLinkNeedsUpdate) {
+        if (!titleNeedsUpdate && !whatsappNeedsUpdate && !leadLinkNeedsUpdate && !meetLinkNeedsUpdate) {
             return;
         }
 
@@ -1652,22 +1683,26 @@ async function ensureEventTitleCorrect(event) {
         }
 
         if (whatsappNeedsUpdate) {
-            // Telefono presente e wa.me mancante → WhatsApp + chiamata (+ scheda) in cima.
+            // Telefono presente e wa.me mancante → WhatsApp + chiamata (+ scheda + Meet) in cima.
             let phoneClean = telefono.replace(/\s+/g, '').replace(/^\+/, '');
             if (!phoneClean.startsWith('39') && phoneClean.length === 10) {
                 phoneClean = '39' + phoneClean;
             }
             const whatsappLink = `https://wa.me/${phoneClean}`;
             const phoneLink = `tel:+${phoneClean}`;
-            const block = `📱 WhatsApp: ${whatsappLink}\n📞 Chiama: ${phoneLink}` +
-                (schedaLine ? '\n' + schedaLine : '');
-            updates.description = block + (currentDescription ? '\n\n' + currentDescription : '');
-            console.log('📱 [v2.5.77] WhatsApp + chiamata' + (schedaLine ? ' + scheda lead' : '') + ' in cima');
-        } else if (leadLinkNeedsUpdate) {
-            // v2.5.77: wa.me già presente OPPURE lead senza telefono → aggiungo SOLO la riga scheda
-            // in cima (idempotente). Prima questo ramo non scattava mai senza telefono.
-            updates.description = schedaLine + '\n' + currentDescription;
-            console.log('📂 [v2.5.77] Aggiunta riga scheda lead (telefono ' + (hasPhone ? 'presente' : 'assente') + '):', appLink);
+            const lines = [`📱 WhatsApp: ${whatsappLink}`, `📞 Chiama: ${phoneLink}`];
+            if (leadLinkNeedsUpdate && schedaLine) lines.push(schedaLine);
+            if (meetLinkNeedsUpdate && meetLine) lines.push(meetLine);
+            updates.description = lines.join('\n') + (currentDescription ? '\n\n' + currentDescription : '');
+            console.log('📱 [v2.5.78] Blocco contatti in cima:', lines);
+        } else if (leadLinkNeedsUpdate || meetLinkNeedsUpdate) {
+            // v2.5.78: wa.me già presente (o lead senza telefono) → aggiungo in cima SOLO le righe
+            // mancanti (scheda e/o Meet). Idempotente, niente duplicati.
+            const lines = [];
+            if (leadLinkNeedsUpdate && schedaLine) lines.push(schedaLine);
+            if (meetLinkNeedsUpdate && meetLine) lines.push(meetLine);
+            updates.description = lines.join('\n') + '\n' + currentDescription;
+            console.log('📂 [v2.5.78] Righe aggiunte a evento esistente:', lines);
         }
 
         // Aggiorna evento
@@ -2007,6 +2042,8 @@ async function addMeetToEvent(eventId, calendarId, btnEl) {
                     <i class="fas fa-copy"></i> Copia link
                 </button>`;
             }
+            // v2.5.78: metti il link Meet anche nella descrizione (blocco da copiare al cliente)
+            await prependMeetLinkToEvent(eventId, calendarId, meetLink);
         } else {
             // Link non ancora pronto — aggiorna dopo 3 secondi
             showNotification('⏳ Meet creato, link in generazione...', 'info');
@@ -2028,6 +2065,8 @@ async function addMeetToEvent(eventId, calendarId, btnEl) {
                             saved[idx].conferenceData = r2.result.conferenceData || null;
                             localStorage.setItem(STORAGE_KEYS_CALENDAR.CALENDAR_EVENTS, JSON.stringify(saved));
                         }
+                        // v2.5.78: link Meet anche nella descrizione (blocco da copiare al cliente)
+                        await prependMeetLinkToEvent(eventId, calendarId, link2);
                         displayCalendarView();
                         showNotification('✅ Link Meet pronto!', 'success');
                     }
@@ -2083,6 +2122,28 @@ async function addMeetToEventFromForm(eventId, calendarId) {
         }
     }, 3500);
 }
+
+// ===== v2.5.78: METTE IL LINK MEET NELLA DESCRIZIONE (blocco contatti) =====
+// Chiamata appena creato un Meet: aggiunge "🎥 Google Meet: <url>" in cima alla descrizione,
+// così il blocco da copiare/incollare al cliente è completo (numero, WhatsApp, scheda, Meet).
+// Idempotente: se il link è già nella descrizione non fa nulla.
+async function prependMeetLinkToEvent(eventId, calendarId, meetLink) {
+    if (!meetLink || !window.gapi?.client?.calendar) return;
+    try {
+        const calId = calendarId || 'primary';
+        const ev = await window.gapi.client.calendar.events.get({ calendarId: calId, eventId });
+        const desc = ev.result.description || '';
+        if (desc.includes(meetLink)) return; // già presente, niente da fare
+        const newDesc = `🎥 Google Meet: ${meetLink}` + (desc ? '\n' + desc : '');
+        await window.gapi.client.calendar.events.patch({
+            calendarId: calId, eventId, resource: { description: newDesc }
+        });
+        console.log('🎥 [v2.5.78] Link Meet aggiunto alla descrizione evento');
+    } catch (e) {
+        console.warn('⚠️ [v2.5.78] Link Meet non aggiunto alla descrizione:', e.message);
+    }
+}
+window.prependMeetLinkToEvent = prependMeetLinkToEvent;
 
 // ===== v2.5.77: COPIA SOLO IL LINK MEET (niente "pippone" di Google) =====
 // Il bottone "Copia invito" di Google Calendar incolla SEMPRE un blocco fisso (orario,
