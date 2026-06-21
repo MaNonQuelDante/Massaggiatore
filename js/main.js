@@ -646,8 +646,11 @@ async function generateMessage(e) {
     // Salva in Google Contacts (v2.5.58: SALVATAGGIO AUTOMATICO ad OGNI invio se il
     // numero NON è già in rubrica — gate primo-messaggio/da-calendario RIMOSSO, ora la
     // dedup contro SAVED_CONTACTS dentro checkAndSaveContact decide cosa salvare).
+    // v2.5.84: AWAIT — prima era fire-and-forget: un fallimento finiva in unhandled
+    // rejection (swallowed) e l'utente credeva fosse salvato. Ora il salvataggio è
+    // osservato e la notifica di fallimento esce PRIMA di resetForm (che sposta il focus).
     if (window.saveContactToGoogle && nome && telefono) {
-        checkAndSaveContact(nome, cognome, telefono, societa, servizio);
+        await checkAndSaveContact(nome, cognome, telefono, societa, servizio);
     }
 
     // Copia automaticamente
@@ -709,8 +712,10 @@ async function sendToWhatsApp() {
     // Salva in Google Contacts (v2.5.58: SALVATAGGIO AUTOMATICO ad OGNI invio se il
     // numero NON è già in rubrica — gate primo-messaggio/da-calendario RIMOSSO, ora la
     // dedup contro SAVED_CONTACTS dentro checkAndSaveContact decide cosa salvare).
+    // v2.5.84: AWAIT — vedi nota in generateMessage. Niente più fire-and-forget:
+    // il fallimento viene osservato e notificato (col nome del lead) prima del reset.
     if (window.saveContactToGoogle && nome && telefono) {
-        checkAndSaveContact(nome, cognome, telefono, societa, servizio);
+        await checkAndSaveContact(nome, cognome, telefono, societa, servizio);
     }
 
     // Reset form (per ultimo: la selezione è già stata usata dal mark)
@@ -781,22 +786,39 @@ async function checkAndSaveContact(nome, cognome, telefono, societa, servizio) {
     }
 
     // 2) Dedup contro SAVED_CONTACTS (numero già in rubrica → non fare nulla)
+    // v2.5.84: log arricchito col MATCH di cache (key + nome) — questa è l'UNICA via
+    // davvero silenziosa lato UI: se un lead "sparisce" senza errore, qui in console si
+    // vede ESATTAMENTE contro cosa ha fatto match (e se è un falso positivo della cache).
     if (window.isPhoneInRubrica) {
         const check = window.isPhoneInRubrica(telefono);
         if (check.present) {
-            console.log(`📇 Contatto già in rubrica (${telefono}) — salvataggio automatico saltato`);
+            console.log(`📇 Contatto già in rubrica — salvataggio automatico saltato. Numero passato: "${telefono}", match cache: key="${check.key}", nome="${check.savedContact?.nome || ''}"`);
             return;
         }
     }
 
     // 3) Salva direttamente in Google Contacts (saveContactToGoogle ritorna true/false e
-    //    gestisce internamente cache, notifiche e il caso 409 "già esistente")
-    console.log('🔵 [v2.5.58] Salvataggio automatico contatto:', { nome, cognome, telefono, societa: societaValue });
-    const ok = await window.saveContactToGoogle({ nome, cognome, telefono, societa: societaValue });
+    //    gestisce internamente cache, notifiche, retryWithBackoff e il caso 409 "già esistente")
+    console.log('🔵 [v2.5.84] Salvataggio automatico contatto:', { nome, cognome, telefono, societa: societaValue });
+    let ok = false;
+    try {
+        ok = await window.saveContactToGoogle({ nome, cognome, telefono, societa: societaValue });
+    } catch (err) {
+        // saveContactToGoogle cattura già internamente, ma blindiamo: un throw imprevisto
+        // NON deve passare inosservato né rompere il chiamante (resetForm più sotto).
+        console.error('❌ [v2.5.84] Eccezione imprevista nel salvataggio automatico contatto:', err);
+        ok = false;
+    }
+
     if (ok) {
-        console.log('✅ [v2.5.58] Contatto salvato automaticamente in rubrica');
+        console.log('✅ [v2.5.84] Contatto salvato automaticamente in rubrica');
     } else {
-        console.warn('⚠️ [v2.5.58] Salvataggio automatico non riuscito (vedi notifica)');
+        // v2.5.84: fallimento REALE → notifica ESPLICITA, col nome del lead, e più persistente
+        // (8s). La notifica generica di saveContactToGoogle sparisce in 3s e non nomina il lead:
+        // così invece sai SEMPRE chi non è entrato in rubrica e che devi rimediare a mano.
+        const label = `${nome || ''} ${cognome || ''}`.trim() || telefono;
+        showNotification(`⚠️ ${label} NON salvato in rubrica — riprova dalla sezione Rubrica`, 'error', 8000);
+        console.warn(`⚠️ [v2.5.84] Salvataggio automatico NON riuscito per ${label} (${telefono})`);
     }
 }
 
@@ -845,16 +867,22 @@ function copyIban() {
 }
 
 // ===== NOTIFICHE =====
-function showNotification(text, type = 'success') {
+// v2.5.84: durata configurabile (default 3s). I fallimenti del salvataggio rubrica
+// usano una durata più lunga così non passano inosservati mentre apri WhatsApp.
+// clearTimeout su un timer condiviso: prima la notifica "Apertura WhatsApp..." (3s)
+// avviava un timer che tagliava QUALSIASI notifica successiva a metà — ora l'ultima
+// chiamata cancella il timer della precedente e tiene la sua durata.
+function showNotification(text, type = 'success', duration = 3000) {
     const notifica = document.getElementById('notifica');
     const notificaText = document.getElementById('notificaText');
-    
+
     notificaText.textContent = text;
     notifica.classList.add('show');
-    
-    setTimeout(() => {
+
+    clearTimeout(window.__notificaTimeout);
+    window.__notificaTimeout = setTimeout(() => {
         notifica.classList.remove('show');
-    }, 3000);
+    }, duration);
 }
 
 // ===== DOLCE PARANOIA =====
