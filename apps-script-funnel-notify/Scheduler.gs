@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Scheduler.gs
- * v1.1.0 (TESTmess v2.5.81)
+ * v1.2.0 (TESTmess v2.5.82)
  *
  * Cuore del sistema. Il trigger ogni 5 minuti chiama checkFunnelNotifications():
  * scorre gli eventi "LEAD - Call", per ogni stamp dovuto (e non confermato/non già
@@ -8,6 +8,18 @@
  *
  * Anti-duplicato: PropertiesService, chiave 'sent_<notifierId>_<eventId>_<stampKey>'
  * (prefisso DISTINTO dal Twilio 'notified_', così i due Apps Script non si pestano).
+ *
+ * CHANGELOG v1.2.0 (TESTmess v2.5.82):
+ * - 🎥 GOOGLE MEET nell'arricchimento: arricchisciEventoFunnel_ ora crea/recupera anche il Meet
+ *      dell'evento (riga "🎥 Google Meet" nel blocco contatti), via Advanced Calendar Service
+ *      (Calendar.Events.get/patch con conferenceData.createRequest) — come fa il front-end con
+ *      ensureMeetOnEvent. Il flag 'enriched_<eventId>' viene marcato SOLO quando il Meet è pronto:
+ *      se Google tarda, riprova ai giri successivi (entro la finestra "fresh" di 3h). Il resto
+ *      della pipeline resta idempotente.
+ * - 🔐 SCOPE: serve "https://www.googleapis.com/auth/calendar" (PIENO, non readonly) perché ora
+ *      scriviamo sull'evento (setDescription/setTitle + patch conferenceData). Aggiornato
+ *      appsscript.json. ⚠️ Richiede ri-autorizzazione (lancia setup()/test() una volta) + abilitare
+ *      l'Advanced Calendar Service nell'editor (Servizi → Google Calendar API, identificatore "Calendar").
  *
  * CHANGELOG v1.1.0 (TESTmess v2.5.81):
  * - ✨ ARRICCHIMENTO EVENTO server-side (arricchisciEventoFunnel_): all'INGRESSO del lead (stamp
@@ -59,7 +71,7 @@ function checkFunnelNotifications() {
       var titolo = (ev.getTitle() || '').trim().toLowerCase();
       if (!calMatch && !funnelTitleMatches_(titolo)) continue;
       visti++;
-      processaEventoFunnel_(ev, props, nowMs, false);
+      processaEventoFunnel_(ev, props, nowMs, false, cal.getId()); // v2.5.82: calId per il Meet
     }
   }
 
@@ -69,7 +81,7 @@ function checkFunnelNotifications() {
 
 // ===== VALUTA UN EVENTO SU TUTTE LE SOGLIE =====
 // dryRun=true → non invia e non marca (solo log). Usato da test().
-function processaEventoFunnel_(ev, props, nowMs, dryRun) {
+function processaEventoFunnel_(ev, props, nowMs, dryRun, calId) {
   var eventId = ev.getId();
   var apptStart = ev.getStartTime(); // orario APPUNTAMENTO (start) — non più T0, tenuto per l'email
 
@@ -112,7 +124,7 @@ function processaEventoFunnel_(ev, props, nowMs, dryRun) {
     // l'evento server-side (blocco contatti + rename titolo). UNA volta sola (flag 'enriched_…').
     // Isolato in try/catch dentro la funzione: NON blocca l'invio dell'email. dryRun → non tocca.
     if (stamp.key === 'ingresso' && !stale && !dryRun) {
-      arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs);
+      arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs, calId);
     }
 
     var lead = null; // costruito una sola volta, solo se serve
@@ -171,16 +183,19 @@ function buildLeadFromEvent_(ev, t0, apptStart, telefono, rec) {
   };
 }
 
-// ===== ✨ v2.5.81: ARRICCHIMENTO EVENTO server-side (blocco contatti + rename titolo) =====
+// ===== ✨ v2.5.81 / 🎥 v2.5.82: ARRICCHIMENTO EVENTO server-side (contatti + titolo + Meet) =====
 // Replica, a browser chiuso, ciò che il front-end fa a "genera/invia messaggio"
-// (js/google-calendar.js: addWhatsAppLinkToEvent / ensureEventTitleCorrect): inietta in cima alla
-// descrizione il blocco contatti (WhatsApp, Chiama, Scheda lead) e rinomina il titolo grezzo
-// ("LEAD - Call"/"FOLLOWUP") in "Nome Cognome". Gira all'INGRESSO (stamp h=0), UNA volta sola per
-// evento (flag 'enriched_<eventId>' su PropertiesService). NON tocca il Meet (richiede l'Advanced
-// Calendar Service / conferenceData → round separato). try/catch: un errore NON blocca l'email.
-function arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs) {
+// (js/google-calendar.js: addWhatsAppLinkToEvent / ensureEventTitleCorrect / ensureMeetOnEvent):
+// inietta in cima alla descrizione il blocco contatti (📱 WhatsApp / 📞 Chiama / 📂 Scheda lead /
+// 🎥 Google Meet) e rinomina il titolo grezzo ("LEAD - Call"/"FOLLOWUP") in "Nome Cognome". Gira
+// all'INGRESSO (stamp h=0). Idempotente (non duplica righe già presenti) e isolato in try/catch (un
+// errore NON blocca l'email). Anti-ripetizione: flag 'enriched_<eventId>' su PropertiesService,
+// marcato SOLO quando anche il Meet è pronto → entro la finestra "fresh" (≤3h) ritenta a crearlo se
+// Google tarda. v2.5.82: il Meet usa l'Advanced Calendar Service (Calendar.Events) → va abilitato
+// nell'editor (Servizi → Google Calendar API) e serve lo scope "calendar" PIENO (vedi appsscript.json).
+function arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs, calId) {
   var flagKey = 'enriched_' + ev.getId();
-  if (props.getProperty(flagKey)) return;   // già arricchito: non rifare a ogni giro dei 5'
+  if (props.getProperty(flagKey)) return;   // già arricchito (Meet incluso): non rifare a ogni giro
 
   try {
     var desc = ev.getDescription() || '';
@@ -203,6 +218,16 @@ function arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs) {
       righeNuove.push('📂 Scheda lead: ' + appLink);
     }
 
+    // 🎥 Google Meet: riuso quello che c'è (in descrizione o sull'evento), altrimenti lo CREO
+    // server-side (Advanced Calendar Service). Indipendente dal telefono. meetMancante=true →
+    // non riesco a ottenerlo ORA: a fine funzione NON marco il flag, così ci riprovo al giro dopo.
+    var meetLink = _estraiMeetDaDescrizione_(desc);
+    if (!meetLink) meetLink = _ensureMeetServerSide_(calId, ev.getId());
+    var meetMancante = !meetLink;
+    if (meetLink && desc.indexOf(meetLink) === -1 && desc.indexOf('🎥 Google Meet') === -1) {
+      righeNuove.push('🎥 Google Meet: ' + meetLink);
+    }
+
     var nuovoDesc = desc;
     if (righeNuove.length) nuovoDesc = righeNuove.join('\n') + (desc ? '\n\n' + desc : '');
 
@@ -222,14 +247,15 @@ function arricchisciEventoFunnel_(ev, telefono, rec, props, nowMs) {
       if (tc && tc !== titoloAttuale) nuovoTitolo = tc;
     }
 
-    var cambiato = false;
-    if (nuovoDesc !== desc) { ev.setDescription(nuovoDesc); cambiato = true; }
-    if (nuovoTitolo)        { ev.setTitle(nuovoTitolo);     cambiato = true; }
+    if (nuovoDesc !== desc) ev.setDescription(nuovoDesc);
+    if (nuovoTitolo)        ev.setTitle(nuovoTitolo);
 
-    // Marca SEMPRE come arricchito (anche se non c'era nulla da aggiungere): non riprovo a ogni giro.
-    props.setProperty(flagKey, String(nowMs));
-    Logger.log('✨ [enrich] "%s": +%s righe contatti%s', titoloAttuale, righeNuove.length,
-               nuovoTitolo ? (' → titolo "' + nuovoTitolo + '"') : (cambiato ? '' : ' (niente da fare)'));
+    // Marco "fatto" SOLO se il Meet è a posto. Se manca, NON marco → ritento al prossimo giro
+    // (entro i 3h "fresh"); il resto è idempotente quindi i ritenti non duplicano niente.
+    if (!meetMancante) props.setProperty(flagKey, String(nowMs));
+    Logger.log('✨ [enrich] "%s": +%s righe%s%s', titoloAttuale, righeNuove.length,
+               nuovoTitolo ? (' · titolo "' + nuovoTitolo + '"') : '',
+               meetMancante ? ' · ⏳ Meet non ancora pronto (ritento)' : ' · 🎥 Meet ok');
   } catch (e) {
     // Isolato di proposito: l'email parte comunque. NON marco il flag → ritento al prossimo giro.
     Logger.log('❌ [enrich] arricchimento fallito (email NON bloccata): %s', e);
@@ -263,6 +289,62 @@ function _titleCaseFunnel_(s) {
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/(^|[\s'’\-])([a-zà-ÿ])/g, function (m, sep, ch) { return sep + ch.toUpperCase(); });
+}
+
+// ===== 🎥 v2.5.82: GOOGLE MEET server-side (Advanced Calendar Service) =====
+// Estrae un eventuale link Meet già scritto nella descrizione (niente chiamate API se c'è già).
+function _estraiMeetDaDescrizione_(desc) {
+  if (!desc) return '';
+  var m = String(desc).match(/https:\/\/meet\.google\.com\/[a-z0-9\-]+/i);
+  return m ? m[0] : '';
+}
+
+// Crea/recupera il link Google Meet dell'evento via Advanced Calendar Service (Calendar.Events).
+// Ritorna l'URL del Meet o '' se non disponibile/non abilitato. Tutto in try/catch: niente eccezioni
+// fuori (l'arricchimento e l'email non si bloccano mai). CalendarApp usa id "...@google.com" mentre
+// l'Advanced Service vuole l'id "nudo" → split('@')[0].
+function _ensureMeetServerSide_(calId, calAppEventId) {
+  if (!calId || !calAppEventId) return '';
+  var apiEventId = String(calAppEventId).split('@')[0];
+  try {
+    if (typeof Calendar === 'undefined') return '';   // Advanced Service non abilitato → niente Meet
+    var ev = Calendar.Events.get(calId, apiEventId);
+    var link = _extractMeetFromApiEvent_(ev);
+    if (link) return link;                              // Meet già presente → riuso, non ne creo un altro
+
+    var resource = {
+      conferenceData: {
+        createRequest: {
+          requestId: Utilities.getUuid(),
+          conferenceSolutionKey: { type: 'hangoutsMeet' }
+        }
+      }
+    };
+    var updated = Calendar.Events.patch(resource, calId, apiEventId, { conferenceDataVersion: 1 });
+    link = _extractMeetFromApiEvent_(updated);
+    if (link) return link;
+
+    // Google a volte genera il link con un attimo di ritardo: 1 retry dopo breve attesa.
+    Utilities.sleep(1500);
+    var again = Calendar.Events.get(calId, apiEventId, { conferenceDataVersion: 1 });
+    return _extractMeetFromApiEvent_(again);
+  } catch (e) {
+    Logger.log('⚠️ [meet] niente Meet per %s: %s', apiEventId, e);
+    return '';
+  }
+}
+
+// Estrae l'URL del Meet da un evento Advanced API: hangoutLink o entryPoint video di conferenceData.
+function _extractMeetFromApiEvent_(ev) {
+  if (!ev) return '';
+  if (ev.hangoutLink) return ev.hangoutLink;
+  var eps = ev.conferenceData && ev.conferenceData.entryPoints;
+  if (eps) {
+    for (var i = 0; i < eps.length; i++) {
+      if (eps[i].entryPointType === 'video' && eps[i].uri) return eps[i].uri;
+    }
+  }
+  return '';
 }
 
 // ===== v2.5.67: T0 = CREAZIONE evento (ingresso). createdISO dal foglio → getDateCreated() → start =====
@@ -367,7 +449,7 @@ function test() {
       var titolo = (ev.getTitle() || '').trim().toLowerCase();
       if (!calMatch && !funnelTitleMatches_(titolo)) continue;
       valutati++;
-      processaEventoFunnel_(ev, props, nowMs, true); // dryRun
+      processaEventoFunnel_(ev, props, nowMs, true, cal.getId()); // dryRun (il Meet non viene toccato)
     }
   }
   Logger.log('--- TEST finito: %s eventi "LEAD - Call" valutati ---', valutati);

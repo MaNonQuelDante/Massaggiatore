@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Config.gs
- * v1.3.0 (introdotto con TESTmess v2.5.66)
+ * v1.4.0 (introdotto con TESTmess v2.5.66)
  *
  * Notifiche automatiche legate al funnel dei lead ("LEAD - Call"). Gira come Google
  * Apps Script autonomo (browser chiuso) su trigger ogni 5 minuti. Per ora invia EMAIL;
@@ -8,6 +8,14 @@
  * scheduling e anti-duplicato.
  *
  * SEPARATO dall'Apps Script Twilio (apps-script-reminder/): quello NON si tocca.
+ *
+ * CHANGELOG v1.4.0 (TESTmess v2.5.82):
+ * - 🎥 Il Meet entra nell'arricchimento evento (Scheduler.gs: arricchisciEventoFunnel_ +
+ *      _ensureMeetServerSide_), creato/recuperato via Advanced Calendar Service (Calendar.Events).
+ * - 🔐 appsscript.json: scope calendar.readonly → "calendar" (PIENO) perché ora scriviamo
+ *      sull'evento, e aggiunto l'Advanced Calendar Service (Calendar v3).
+ * - ⚠️ REDEPLOY: oltre a ricopiare i .gs, nell'editor abilita Servizi → Google Calendar API
+ *      (identificatore "Calendar") e ri-autorizza (lancia setup() o test() una volta).
  *
  * CHANGELOG v1.3.0 (TESTmess v2.5.81):
  * - ✉️ EMAIL: oggetto "Nome Cognome - <step>" (mappa step in Notifiers.gs), corpo ripulito
