@@ -520,7 +520,29 @@ async function updatePreview() {
         console.error('❌ Template non trovato per:', tipoMessaggio);
         return;
     }
-    
+
+    // 🆕 v2.5.83: "Gruppo No Show". Il testo è IDENTICO al bottone NoShow della card (stessa fonte:
+    // buildNoShowText) — nome/cognome/telefono dal form, orario appuntamento (t0) dal lead selezionato
+    // in #selectLead (la stessa dataset.eventData usata da {URL}). Esco subito: questo template NON usa
+    // i segnaposto standard {BB}/{NN}/… ma il blocco fisso a 5 righe del Gruppo NoShow.
+    if (tipoMessaggio === 'gruppo_noshow') {
+        const cognomeForm = document.getElementById('cognome').value.trim();
+        const telefonoForm = document.getElementById('telefono').value.trim();
+        let t0NoShow = null;
+        try {
+            const selLead = document.getElementById('selectLead');
+            const optNoShow = selLead && selLead.selectedOptions && selLead.selectedOptions[0];
+            if (optNoShow && optNoShow.dataset && optNoShow.dataset.eventData) {
+                const evNoShow = JSON.parse(optNoShow.dataset.eventData);
+                if (evNoShow && evNoShow.start) t0NoShow = new Date(evNoShow.start);
+            }
+        } catch (e) {
+            console.warn('⚠️ Gruppo NoShow: impossibile leggere l\'orario appuntamento dal lead selezionato', e);
+        }
+        preview.value = buildNoShowText({ nome: nome, cognome: cognomeForm, telefono: telefonoForm }, t0NoShow);
+        return;
+    }
+
     // Sostituzioni
     const BB = getSalutoIniziale();
     const NN = nome;
@@ -644,14 +666,15 @@ async function sendToWhatsApp() {
     let telefono = document.getElementById('telefono').value.trim();
     const servizio = document.getElementById('servizio').value;
     const societa = getSocietaValue(); // USA LA NUOVA FUNZIONE
-    
+    const tipoMessaggio = document.getElementById('tipoMessaggio')?.value; // v2.5.83: per il caso Gruppo No Show
+
     if (!nome) {
         showNotification('Inserisci il nome!', 'error');
         return;
     }
-    
+
     const messaggio = document.getElementById('anteprimaMessaggio').value;
-    
+
     // Se telefono vuoto, usa numero utente (fallback)
     if (!telefono) {
         // TODO: Implementare rilevamento numero utente
@@ -665,11 +688,17 @@ async function sendToWhatsApp() {
         telefono = '39' + telefono;
     }
     
+    // v2.5.83: il messaggio "Gruppo No Show" NON va al lead → lo mando a ME STESSO (+39 351 980 9874)
+    // e poi lo inoltro a mano sul gruppo. Il corpo contiene già i dati del lead. NB: la cronologia e
+    // la marcatura del lead più sotto restano legate al numero del LEAD (telefono), NON al numero self.
+    const NOSHOW_SELF_NUMBER = '393519809874';
+    const waRecipient = (tipoMessaggio === 'gruppo_noshow') ? NOSHOW_SELF_NUMBER : telefono;
+
     // v2.5.42 FIX: apri WhatsApp SUBITO, mentre siamo ancora nel gesto-utente del click.
     // (Se aprissimo dopo gli await qui sotto, il popup blocker bloccherebbe la finestra.)
-    const whatsappUrl = `https://wa.me/${telefono}?text=${encodeURIComponent(messaggio)}`;
+    const whatsappUrl = `https://wa.me/${waRecipient}?text=${encodeURIComponent(messaggio)}`;
     window.open(whatsappUrl, '_blank');
-    showNotification('Apertura WhatsApp...', 'success');
+    showNotification(tipoMessaggio === 'gruppo_noshow' ? 'Gruppo No Show: te lo mando per inoltro…' : 'Apertura WhatsApp...', 'success');
 
     // Salva in cronologia (v2.2.27: con servizio e società)
     // v2.5.42 FIX: AWAIT e PRIMA del resetForm — così il mark legge il lead ancora
@@ -1164,6 +1193,11 @@ async function saveToCronologia(nome, cognome, telefono, messaggio, servizio, so
     // v2.5.42 FIX: AWAIT — il chiamante (generateMessage/sendToWhatsApp) ora aspetta
     // questa catena PRIMA di resetForm, così la selezione del lead è ancora valida.
     await markLeadAsContactedFromCalendar(nome, cognome, telefono);
+
+    // v2.5.83: auto-spunta lo step funnel corrispondente al tipo messaggio appena inviato. Gira da
+    // ENTRAMBI i flussi (generateMessage 'generato' e sendToWhatsApp 'whatsapp'), già await-ati prima
+    // del resetForm → vale per entrambi i bottoni senza altre modifiche ai chiamanti.
+    await autoCheckFunnelStepOnSend(tipoMessaggio, nome, cognome, telefono);
 }
 
 // ===== MARCA LEAD DA CALENDARIO COME CONTATTATO =====
@@ -1709,11 +1743,14 @@ function leadStepTime(base, offsetH) {
 // v2.5.59: destinatario fisso del bottone "Gruppo NoShow".
 const NOSHOW_WA_NUMBER = '393755588371';
 
-// v2.5.59: href WhatsApp per inoltrare il lead al "Gruppo NoShow". Il testo contiene SOLO
-// i valori, uno per riga, senza etichette:
+// v2.5.59: TESTO del messaggio "Gruppo NoShow". Contiene SOLO i valori, uno per riga, senza
+// etichette:
 //   nome cognome lead / data e ora appuntamento / telefono lead / nome assistente / primo
-//   nome account Google. Stesse fonti già usate in card e messaggi. encodeURIComponent sul testo.
-function buildNoShowWaHref(lead, t0) {
+//   nome account Google. Stesse fonti già usate in card e messaggi.
+// v2.5.83: estratto da buildNoShowWaHref così il template "Gruppo No Show" del form (vedi
+// updatePreview) produce un testo IDENTICO al bottone NoShow della card — unica fonte di verità,
+// niente testo duplicato/inventato.
+function buildNoShowText(lead, t0) {
     const nomeCognome = (`${lead.nome || ''} ${lead.cognome || ''}`).trim();
     const appuntamento = t0 ? fmtLeadEventWhen(t0) : '';
     const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '';
@@ -1723,8 +1760,13 @@ function buildNoShowWaHref(lead, t0) {
     const googleName = (window.userProfileData && window.userProfileData()?.name)
         || localStorage.getItem('sgmess_operator_name') || '';
     const googleFirst = (googleName.split(' ')[0] || '').trim();
-    const testo = [nomeCognome, appuntamento, telefono, assistente, googleFirst].join('\n');
-    return `https://wa.me/${NOSHOW_WA_NUMBER}?text=${encodeURIComponent(testo)}`;
+    return [nomeCognome, appuntamento, telefono, assistente, googleFirst].join('\n');
+}
+
+// v2.5.59: href WhatsApp per inoltrare il lead al "Gruppo NoShow" (numero FISSO del gruppo).
+// encodeURIComponent sul testo prodotto da buildNoShowText.
+function buildNoShowWaHref(lead, t0) {
+    return `https://wa.me/${NOSHOW_WA_NUMBER}?text=${encodeURIComponent(buildNoShowText(lead, t0))}`;
 }
 
 // HTML del blocco checklist per una singola card lead. `resolution` = output di resolveLeadT0.
@@ -1903,6 +1945,51 @@ async function toggleLeadChecklistStep(leadKey, step, checked) {
     }
 }
 window.toggleLeadChecklistStep = toggleLeadChecklistStep;
+
+// v2.5.83: AUTO-SPUNTA dello step funnel all'invio del messaggio corrispondente. Così il timestamp
+// CONGELATO (firstCheckedAt, dentro toggleLeadChecklistStep) coincide con l'orario REALE d'invio e non
+// con quello — spesso tardivo — in cui l'utente si ricorda di mettere la spunta a mano.
+// Mappa tipo messaggio → step funnel. 'chiamata' NON è qui di proposito: il tel: parte spesso FUORI
+// dall'app (Google Calendar / mail / WhatsApp) e non è intercettabile lato JS → verrà gestito a parte.
+const MSG_TYPE_TO_FUNNEL_STEP = {
+    primo_messaggio: 'scrivere',
+    riscontro:       'sollecitare',
+    gruppo_noshow:   'noshow'
+};
+
+async function autoCheckFunnelStepOnSend(tipoMessaggio, nome, cognome, telefono) {
+    const step = MSG_TYPE_TO_FUNNEL_STEP[tipoMessaggio];
+    if (!step) return; // tipo non mappato → nessuna auto-spunta
+    if (!(window.DriveStorage && window.accessToken)) return; // come la cronologia: senza cloud non spuntiamo
+
+    const leadKey = leadIdentityKey(telefono, nome, cognome);
+    if (!leadKey) return;
+
+    // v2.5.83 SICUREZZA: la spunta può partire dalla Home, dove la sezione Lead potrebbe NON essere mai
+    // stata aperta in questa sessione → leadChecklistState/Times sarebbero vuoti e il save dentro
+    // toggleLeadChecklistStep SOVRASCRIVEREBBE su Drive cancellando le spunte di TUTTI gli altri lead.
+    // Quindi rileggo prima da Drive lo stato COMPLETO (fonte di verità); le modifiche in memoria sono
+    // sempre già persistite, quindi questa rilettura non perde nulla.
+    try {
+        const savedState = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CHECKLIST);
+        if (savedState && typeof savedState === 'object') leadChecklistState = savedState;
+        const savedTimes = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CHECKLIST_TIMES);
+        if (savedTimes && typeof savedTimes === 'object') leadChecklistTimes = savedTimes;
+    } catch (e) {
+        console.warn('⚠️ [Funnel] Rilettura checklist da Drive prima dell\'auto-spunta fallita (procedo):', e);
+    }
+
+    // già spuntato → niente da fare (evita un save ridondante; il firstCheckedAt resta comunque congelato)
+    if ((leadChecklistState[leadKey] || {})[step] === true) return;
+
+    // toggleLeadChecklistStep è no-op a funnel congelato (Confermato/No): comportamento voluto.
+    try {
+        await toggleLeadChecklistStep(leadKey, step, true);
+        console.log(`✅ [Funnel] Auto-spunta '${step}' per invio '${tipoMessaggio}' (${leadKey})`);
+    } catch (e) {
+        console.warn('⚠️ [Funnel] Auto-spunta fallita (ignoro):', e);
+    }
+}
 
 // v2.5.69: imposta lo STATO conferma del lead (confermato|pending|no). È SEMPRE una scelta manuale,
 // ANCORATA all'appuntamento corrente (createdISO): se domani il lead ri-fissa, lo stato torna a
@@ -2784,6 +2871,16 @@ async function loadTemplates() {
                 nome: 'Link Meet',
                 categoria: 'Promemoria',
                 testo: '{URL}\nEccoci {NN}, ti lascio intanto il link. A tra poco'
+            },
+            // v2.5.83: template "Gruppo No Show". Il testo vero è generato in updatePreview da
+            // buildNoShowText (stessa fonte del bottone NoShow della card); i segnaposto qui sotto
+            // documentano solo la struttura a 5 righe, NON vengono risolti uno a uno. All'invio
+            // (sendToWhatsApp) il messaggio va a TE STESSO (+39 351 980 9874), non al lead.
+            {
+                id: 'gruppo_noshow',
+                nome: 'Gruppo No Show',
+                categoria: 'Promemoria',
+                testo: '{NN_COGNOME}\n{APPUNTAMENTO}\n{TELEFONO}\n{ASSISTENTE}\n{GOOGLE_FIRST}'
             }
         ];
         templates = defaultTemplates;
@@ -2830,6 +2927,21 @@ async function loadTemplates() {
         });
         localStorage.setItem('sgmess_templates_local', JSON.stringify(templates));
         console.log('✅ Link Meet aggiunto');
+    }
+
+    // v2.5.83: se manca "Gruppo No Show" (localStorage di una versione precedente) lo aggiungo, come
+    // per Link Meet. Col reset forzato in cima a loadTemplates è già ricreato dai default; questo blocco
+    // lo rende robusto anche se in futuro il reset venisse tolto.
+    if (templates.length > 0 && !templates.find(t => t.id === 'gruppo_noshow')) {
+        console.log('🔄 Aggiornamento: aggiungo Gruppo No Show...');
+        templates.push({
+            id: 'gruppo_noshow',
+            nome: 'Gruppo No Show',
+            categoria: 'Promemoria',
+            testo: '{NN_COGNOME}\n{APPUNTAMENTO}\n{TELEFONO}\n{ASSISTENTE}\n{GOOGLE_FIRST}'
+        });
+        localStorage.setItem('sgmess_templates_local', JSON.stringify(templates));
+        console.log('✅ Gruppo No Show aggiunto');
     }
 
     // Popola dropdown
@@ -2885,4 +2997,4 @@ async function loadMessaggiList() {
 // ===== EXPORT FUNZIONI GLOBALI =====
 window.showNotification = showNotification;
 
-console.log('✅ Main.js v2.5.8 caricato');
+console.log('✅ Main.js v2.5.83 caricato');
