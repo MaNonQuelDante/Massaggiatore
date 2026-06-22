@@ -1,13 +1,18 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — FunnelStore.gs
- * v1.0.0
+ * v1.1.0 (TESTmess v2.5.89)
  *
  * Legge il Google Sheet "Funnel Lead" (mirror scritto dal web app) e risponde a due
  * domande dello scheduler: "questo lead è Confermato?" e "dammi i dati del lead".
  *
- * Il foglio (tab CONFIG.SHEET_TAB) ha intestazione (v2.5.67):
- *   leadKey | telefono | nome | codice | status | t0ISO | createdISO | updatedAt
+ * Il foglio (tab CONFIG.SHEET_TAB) ha intestazione (v2.5.89):
+ *   leadKey | telefono | nome | codice | status | t0ISO | createdISO | updatedAt | lastStep
  *   (legge ancora il vecchio schema con colonna "confirmed" come fallback.)
+ *
+ * CHANGELOG v1.1.0 (TESTmess v2.5.89) — ⚠️ REDEPLOY MANUALE:
+ * - 📝 Legge la nuova colonna "lastStep" (label dell'ultima azione svolta verso il lead, scritta
+ *      dal web app in coda allo schema). Tollerante all'ordine (head.indexOf), finisce in rec.lastStep
+ *      ed è usata da Notifiers.gs per "Ultima azione verso il lead: …".
  *
  * Il match si fa PER TELEFONO NORMALIZZATO (prefisso 39 agnostico, ultime cifre),
  * con leadKey come chiave secondaria. Cache in memoria per la singola esecuzione.
@@ -68,7 +73,8 @@ var FunnelStore = (function () {
       status:     head.indexOf('status'),       // v2.5.67: confermato|pending|no
       confirmed:  head.indexOf('confirmed'),     // LEGACY (schema v2.5.66): fallback se manca 'status'
       t0ISO:      head.indexOf('t0iso'),
-      createdISO: head.indexOf('creatediso')     // v2.5.67: data creazione evento (T0 funnel)
+      createdISO: head.indexOf('creatediso'),    // v2.5.67: data creazione evento (T0 funnel)
+      lastStep:   head.indexOf('laststep')        // v2.5.89: label ultima azione svolta verso il lead
     };
 
     for (var r = 1; r < values.length; r++) {
@@ -84,7 +90,8 @@ var FunnelStore = (function () {
         codice:     ci.codice     >= 0 ? String(row[ci.codice]).trim()     : '',
         status:     statusRaw,
         t0ISO:      ci.t0ISO      >= 0 ? String(row[ci.t0ISO]).trim()      : '',
-        createdISO: ci.createdISO >= 0 ? String(row[ci.createdISO]).trim() : ''
+        createdISO: ci.createdISO >= 0 ? String(row[ci.createdISO]).trim() : '',
+        lastStep:   ci.lastStep   >= 0 ? String(row[ci.lastStep]).trim()   : ''   // v2.5.89
       };
       _rows.push(rec);
       var ph = _normPhone(rec.telefono);

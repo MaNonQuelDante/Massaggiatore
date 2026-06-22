@@ -1,6 +1,15 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Notifiers.gs
- * v1.4.0 (TESTmess v2.5.87)
+ * v1.5.0 (TESTmess v2.5.89)
+ *
+ * CHANGELOG v1.5.0 (TESTmess v2.5.89) — ⚠️ REDEPLOY MANUALE:
+ * - 📞 FIX 1: la riga "📞 Telefono" ora passa per _formatTelFunnel_ (Scheduler.gs) → "+39 392 640 6102"
+ *      invece del numero grezzo "393926406102". Applicato al ramo normale E al ramo isCrm.
+ * - 🧹 FIX 2: firma mail "— TESTmess Funnel Notify" → "— Funnel Notify" (via "TESTmess" dal corpo).
+ * - 🗓️ FIX 3: la riga "📅 Appuntamento" usa FunnelNotify_fmtApptIt → "mar 24 giu 2026, 17:00" (ramo
+ *      normale E isCrm). La riga "🕒 Ingresso lead" resta col formato numerico (FunnelNotify_fmtDataIt).
+ * - 📝 FIX 4: ramo non-ingresso/non-crm → se lead.lastStep è valorizzato mostra
+ *      "Ultima azione verso il lead: <step>." al posto di "È scaduto uno stamp del funnel…" (fallback).
  *
  * CHANGELOG v1.4.0 (TESTmess v2.5.87):
  * - 📝 NUOVO stamp 'crm2h' (reminder "compila CRM", Feature C): oggetto "Nome - Compila CRM
@@ -68,26 +77,34 @@ var EmailNotifier = {
       righe.push('Hai esitato il lead ' + (nome || '(senza nome)') + ' sul CRM e mandato la call ad Andrea?');
       righe.push('');
       righe.push('👤 Lead: ' + (nome || '(senza nome)'));
-      if (lead.telefono) righe.push('📞 Telefono: ' + lead.telefono);
-      if (lead.apptStart) righe.push('📅 Appuntamento: ' + FunnelNotify_fmtDataIt(lead.apptStart));
+      if (lead.telefono) righe.push('📞 Telefono: ' + _formatTelFunnel_(lead.telefono)); // v2.5.89 FIX 1
+      if (lead.apptStart) righe.push('📅 Appuntamento: ' + FunnelNotify_fmtApptIt(lead.apptStart)); // v2.5.89 FIX 3
     } else {
-      righe.push(isIngresso
-        ? 'È entrato un nuovo lead (evento creato in calendario).'
-        : 'È scaduto uno stamp del funnel per questo lead.');
+      // v2.5.89 FIX 4: l'ingresso resta "nuovo lead"; per gli altri stamp, se ho l'ultima azione svolta
+      // (lead.lastStep, dalla colonna del foglio) la mostro, altrimenti tengo la vecchia frase fissa.
+      var fraseStamp;
+      if (isIngresso) {
+        fraseStamp = 'È entrato un nuovo lead (evento creato in calendario).';
+      } else if (lead.lastStep) {
+        fraseStamp = 'Ultima azione verso il lead: ' + lead.lastStep + '.';
+      } else {
+        fraseStamp = 'È scaduto uno stamp del funnel per questo lead.'; // fallback storico
+      }
+      righe.push(fraseStamp);
       righe.push('');
       righe.push('👤 Lead: ' + (nome || '(senza nome)'));
-      if (lead.telefono) righe.push('📞 Telefono: ' + lead.telefono);
+      if (lead.telefono) righe.push('📞 Telefono: ' + _formatTelFunnel_(lead.telefono)); // v2.5.89 FIX 1
       // v2.5.81: via la parentesi "(creazione evento)".
-      righe.push('🕒 Ingresso lead: ' + FunnelNotify_fmtDataIt(lead.t0));
+      righe.push('🕒 Ingresso lead: ' + FunnelNotify_fmtDataIt(lead.t0)); // FIX 3: ingresso resta numerico
       // v2.5.81: via la parentesi "(call)".
-      if (lead.apptStart) righe.push('📅 Appuntamento: ' + FunnelNotify_fmtDataIt(lead.apptStart));
+      if (lead.apptStart) righe.push('📅 Appuntamento: ' + FunnelNotify_fmtApptIt(lead.apptStart)); // v2.5.89 FIX 3
       // v2.5.81: rimossa la riga esplicativa "🆕 Ingresso lead registrato (T0)." / "⏰ Stamp raggiunto…".
     }
     righe.push('');
     if (lead.eventLink) righe.push('📅 Evento calendario: ' + lead.eventLink);
     if (lead.appLink)   righe.push('📂 Scheda lead: ' + lead.appLink);
     righe.push('');
-    righe.push('— TESTmess Funnel Notify');
+    righe.push('— Funnel Notify'); // v2.5.89 FIX 2: via "TESTmess" dal corpo mail
 
     var corpo = righe.join('\n');
 

@@ -54,11 +54,13 @@ leggere** (è per-applicazione). Perciò il web app lo **rispecchia** in un Goog
 questo script legge. Tab `LEADS`, intestazione (riga 1):
 
 ```
-leadKey | telefono | nome | codice | status | t0ISO | createdISO | updatedAt
+leadKey | telefono | nome | codice | status | t0ISO | createdISO | updatedAt | lastStep
 ```
 
 `status` = `confermato|pending|no`; `createdISO` = creazione evento (= T0 del funnel); `t0ISO` =
-orario appuntamento. Lo script legge ancora il vecchio header con `confirmed` come fallback.
+orario appuntamento; `lastStep` (v2.5.89) = label dell'ultima azione svolta verso il lead, mostrata
+nell'email ("Ultima azione verso il lead: …"). Lo script legge ancora il vecchio header con
+`confirmed` come fallback ed è tollerante all'ordine/assenza delle colonne.
 
 Il foglio viene **creato e popolato automaticamente dal web app** al primo caricamento della
 sezione Lead (serve solo incollare l'ID del foglio anche lato web, in `js/config.js` →

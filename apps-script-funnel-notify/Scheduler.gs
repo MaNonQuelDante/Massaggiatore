@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Scheduler.gs
- * v1.3.0 (TESTmess v2.5.87)
+ * v1.4.0 (TESTmess v2.5.89)
  *
  * Cuore del sistema. Il trigger ogni 5 minuti chiama checkFunnelNotifications():
  * scorre gli eventi "LEAD - Call", per ogni stamp dovuto (e non confermato/non già
@@ -8,6 +8,15 @@
  *
  * Anti-duplicato: PropertiesService, chiave 'sent_<notifierId>_<eventId>_<stampKey>'
  * (prefisso DISTINTO dal Twilio 'notified_', così i due Apps Script non si pestano).
+ *
+ * CHANGELOG v1.4.0 (TESTmess v2.5.89) — ⚠️ REDEPLOY MANUALE (nessun nuovo trigger):
+ * - 📞 _formatTelFunnel_(raw): telefono leggibile col prefisso ("393926406102" → "+39 392 640 6102").
+ *      Replica formatLeadPhoneDisplay di js/main.js. Usata da Notifiers.gs per la riga "📞 Telefono".
+ * - 🗓️ FunnelNotify_fmtApptIt(d): data appuntamento "in lettere" abbreviata IT ("mar 24 giu 2026, 17:00").
+ *      Prova il formato nativo; se il locale del runtime NON è italiano ricostruisce a mano con array IT,
+ *      estraendo i campi nella TZ dello script (Europe/Rome). Usata SOLO per la riga Appuntamento.
+ * - 📝 buildLeadFromEvent_: aggiunge lead.lastStep (da rec.lastStep, nuova colonna del foglio) per la
+ *      frase "Ultima azione verso il lead: …" in Notifiers.gs.
  *
  * CHANGELOG v1.3.0 (TESTmess v2.5.87) — ⚠️ REDEPLOY MANUALE + RILANCIA setup() (nuovo trigger):
  * - 🌙 FEATURE A (quiet hours): _applyQuietHours_(sogliaDate) slitta gli stamp che cadono dopo le 19
@@ -209,6 +218,7 @@ function buildLeadFromEvent_(ev, t0, apptStart, telefono, rec) {
     eventLink: eventLink,
     appLink: appLink,
     code: code,
+    lastStep: (rec ? rec.lastStep : '') || '', // v2.5.89: ultima azione svolta verso il lead (dal foglio)
     eventId: ev.getId()
   };
 }
@@ -504,6 +514,49 @@ function FunnelNotify_fmtDataIt(d) {
   return Utilities.formatDate(d, Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm');
 }
 
+// ===== v2.5.89 FIX 3: DATA APPUNTAMENTO "in lettere" abbreviata IT ("mar 24 giu 2026, 17:00") =====
+// Usata SOLO per la riga Appuntamento dell'email (Notifiers.gs). La riga "🕒 Ingresso lead" resta
+// col formato numerico (FunnelNotify_fmtDataIt). Strategia:
+//   1) tentativo NATIVO Utilities.formatDate(..., 'EEE dd MMM yyyy, HH:mm'): se il primo token (giorno)
+//      è italiano (tra i nostri 'giorni') lo restituisco così com'è;
+//   2) FALLBACK manuale con array IT (Apps Script può girare con locale EN anche se la TZ è Europe/Rome):
+//      estraggo i campi nella TZ dello script (NON l'ora UTC grezza) e li compongo a mano con zero-pad.
+function FunnelNotify_fmtApptIt(d) {
+  if (!d) return '(orario sconosciuto)';
+  var tz = Session.getScriptTimeZone();
+  var giorni = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+  var mesi   = ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'];
+
+  // 1) nativo: lo accetto solo se è davvero italiano (giorno riconosciuto), altrimenti fallback.
+  try {
+    var nativo = Utilities.formatDate(d, tz, 'EEE dd MMM yyyy, HH:mm');
+    var primo = nativo.split(' ')[0].toLowerCase().replace(/\.$/, ''); // alcuni locale: "mar."
+    if (giorni.indexOf(primo) !== -1) return nativo;
+  } catch (e) { /* fallback manuale */ }
+
+  // 2) manuale, tutti i campi nella TZ dello script: 'u' = giorno settimana ISO (1=lun..7=dom);
+  //    'u' % 7 → dom=0,lun=1,…,sab=6 = stesso ordine dell'array 'giorni' (come Date.getDay()).
+  var dow  = parseInt(Utilities.formatDate(d, tz, 'u'), 10) % 7;
+  var dd   = Utilities.formatDate(d, tz, 'dd');            // zero-pad nativo
+  var mon  = parseInt(Utilities.formatDate(d, tz, 'MM'), 10) - 1;
+  var yyyy = Utilities.formatDate(d, tz, 'yyyy');
+  var hm   = Utilities.formatDate(d, tz, 'HH:mm');          // zero-pad nativo
+  return giorni[dow] + ' ' + dd + ' ' + mesi[mon] + ' ' + yyyy + ', ' + hm;
+}
+
+// ===== v2.5.89 FIX 1: TELEFONO LEAD leggibile col prefisso ("393926406102" → "+39 392 640 6102") =====
+// Replica formatLeadPhoneDisplay di js/main.js: normalizza a sole cifre, toglie 0039/39 iniziale SOLO se
+// è davvero un prefisso (numero più lungo di un nazionale a 10 cifre, così non "mangia" un 39x nazionale),
+// raggruppa 3-3-resto e antepone "+39 ". Se non ci sono cifre ritorna il valore grezzo. Usata in Notifiers.gs.
+function _formatTelFunnel_(raw) {
+  var digits = String(raw == null ? '' : raw).replace(/\D/g, '');
+  if (!digits) return String(raw == null ? '' : raw);
+  if (digits.indexOf('0039') === 0) digits = digits.substring(4);
+  else if (digits.indexOf('39') === 0 && digits.length > 10) digits = digits.substring(2);
+  var grouped = digits.replace(/^(\d{3})(\d{3})(\d+)$/, '$1 $2 $3'); // se non combacia, resta intero
+  return '+39 ' + grouped;
+}
+
 // ===== PULIZIA chiavi dedup > 48h =====
 function pulisciVecchieChiavi_(props, nowMs) {
   var tutte = props.getProperties();
@@ -621,7 +674,7 @@ function _composeDigestBody_(confermati, pending, dataStr) {
   righe.push('');
   righe.push(blocco('⏳ In attesa di conferma:', pending, '(nessuno)'));
   righe.push('');
-  righe.push('— TESTmess Funnel Notify');
+  righe.push('— Funnel Notify'); // v2.5.89 FIX 2: via "TESTmess" dal corpo mail
   return righe.join('\n');
 }
 
