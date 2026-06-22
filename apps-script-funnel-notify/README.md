@@ -18,8 +18,15 @@ appuntamento. Stamp da T0 (NON cumulativi), allineati al funnel UI:
 | T0 + 4h | `sollecitare` | Sollecitare il lead |
 | T0 + 6h | `chiamata`    | Sollecitare via chiamata |
 
-- **Stato a 3 valori** (`confermato` / `pending` / `no`): le email partono **SOLO se lo stato è
-  `pending`**. `confermato` e `no` **fermano** il funnel di quel lead.
+- **Stato a 3 valori** (`confermato` / `pending` / `no`): le email del funnel partono **SOLO se lo
+  stato è `pending`**. `confermato` e `no` **fermano** il funnel di quel lead.
+- **🌙 Quiet hours (v2.5.87)**: gli stamp (tranne `ingresso`) che cadrebbero **dopo le 19:00** o
+  **di notte (<09:00)** slittano alle **09:00 del mattino utile successivo** (`_applyQuietHours_`).
+  La tolleranza stale è calcolata sulla soglia **slittata**.
+- **📝 Reminder CRM (v2.5.87)**: stamp `crm2h` = **orario appuntamento + 2h** che — al contrario del
+  funnel normale — parte **SOLO se `confermato`** ("Compila CRM / call ad Andrea").
+- **📋 Digest giornaliero (v2.5.87)**: trigger separato **@08:00** che manda **una** mail-riepilogo
+  con i lead il cui **appuntamento è oggi** (✅ confermati · ⏳ in attesa; `no` esclusi).
 - **NON retroattivo (`FUNNEL_CUTOFF_ISO`)**: un evento **creato prima del cutoff** viene **saltato
   senza inviare**, a prescindere dallo stato — niente mail "indietro nel tempo". Doppia barriera
   (stato lato web + cutoff hard qui). Il valore DEVE essere identico a `FUNNEL_CUTOFF_ISO` in
@@ -35,7 +42,8 @@ appuntamento. Stamp da T0 (NON cumulativi), allineati al funnel UI:
 - `FunnelStore.gs` — legge il Google Sheet mirror; risponde `getStatus()` / `shouldStopFunnel()` / `getLead()`.
 - `Notifiers.gs` — notifier intercambiabili `{ id, isEnabled(), send(lead, stamp) }`. Attivo:
   `EmailNotifier`. Segnaposto commentato per `WhatsAppNotifier`.
-- `Scheduler.gs` — `checkFunnelNotifications()` (trigger), `setup()`, `test()`, `testSendOnce()`.
+- `Scheduler.gs` — `checkFunnelNotifications()` (trigger 5'), `dailyLeadDigest()` (trigger @08:00,
+  v2.5.87), `_applyQuietHours_` / `_processaCrmReminder_`, `setup()`, `test()`, `testSendOnce()`.
 
 Per aggiungere un canale: implementa un notifier e mettilo in `NOTIFIERS`. Lo scheduling e
 l'anti-duplicato (per canale) sono già pronti.
@@ -68,7 +76,9 @@ sezione Lead (serve solo incollare l'ID del foglio anche lato web, in `js/config
    `confermato`/`no` e quelli creati prima del cutoff risultino saltati.
 5. `testSendOnce()` → arriva **una** email reale a `dante.consulenze@gmail.com`. Controlla
    oggetto/corpo e i due link.
-6. `setup()` → attiva il trigger ogni 5 minuti.
+6. `setup()` → attiva i trigger: **ogni 5 minuti** (`checkFunnelNotifications`) **+ @08:00**
+   (`dailyLeadDigest`, v2.5.87). `setup()` è **idempotente** (rieseguirlo non duplica i trigger):
+   **dopo ogni redeploy che cambia/aggiunge trigger va rilanciato.**
 
 ## Note di sicurezza
 - Finché `CONFIG.SHEET_ID` è vuoto **non parte nessun invio** (fail-safe).

@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Scheduler.gs
- * v1.2.0 (TESTmess v2.5.82)
+ * v1.3.0 (TESTmess v2.5.87)
  *
  * Cuore del sistema. Il trigger ogni 5 minuti chiama checkFunnelNotifications():
  * scorre gli eventi "LEAD - Call", per ogni stamp dovuto (e non confermato/non già
@@ -8,6 +8,19 @@
  *
  * Anti-duplicato: PropertiesService, chiave 'sent_<notifierId>_<eventId>_<stampKey>'
  * (prefisso DISTINTO dal Twilio 'notified_', così i due Apps Script non si pestano).
+ *
+ * CHANGELOG v1.3.0 (TESTmess v2.5.87) — ⚠️ REDEPLOY MANUALE + RILANCIA setup() (nuovo trigger):
+ * - 🌙 FEATURE A (quiet hours): _applyQuietHours_(sogliaDate) slitta gli stamp che cadono dopo le 19
+ *      (o di notte) alle 09:00 del mattino utile successivo. Applicata in processaEventoFunnel_ a
+ *      sogliaMs PRIMA del confronto due/stale, ESCLUSO 'ingresso'. La TOLLERANZA stale usa la soglia
+ *      SLITTATA (così uno stamp serale slittato non viene marcato stale e poi mai inviato).
+ * - 📋 FEATURE B (digest): dailyLeadDigest() (trigger @08:00, registrato da setup()) manda UNA mail
+ *      con i lead il cui APPUNTAMENTO è OGGI, divisi in ✅ Confermati / ⏳ In attesa (status='no' esclusi).
+ *      Niente mail se entrambi i blocchi sono vuoti. Corpo composto da _composeDigestBody_.
+ * - 📝 FEATURE C (reminder CRM): _processaCrmReminder_ — stamp 'crm2h' = apptStart + CRM_REMINDER_H,
+ *      invia SOLO se status='confermato'. Chiamato in processaEventoFunnel_ PRIMA del gate pending
+ *      (che fa `return` su ogni stato ≠ pending, confermato incluso). Stessi cutoff/stale/quiet-hours
+ *      e dedup dedicata 'sent_<notifierId>_<eventId>_crm2h'.
  *
  * CHANGELOG v1.2.0 (TESTmess v2.5.82):
  * - 🎥 GOOGLE MEET nell'arricchimento: arricchisciEventoFunnel_ ora crea/recupera anche il Meet
@@ -108,6 +121,15 @@ function processaEventoFunnel_(ev, props, nowMs, dryRun, calId) {
   // 🚦 v2.5.67: invio SOLO se lo stato è "pending". "confermato"/"no" → funnel fermo.
   // Lead sconosciuto/cella vuota → 'pending' (default), ma il cutoff qui sopra protegge i vecchi.
   var status = FunnelStore.getStatus(telefono, leadKey);
+
+  // 📝 v2.5.87 FEATURE C: reminder "compila CRM" a +CRM_REMINDER_H dall'APPUNTAMENTO, SOLO se
+  // status='confermato'. DEVE stare QUI, PRIMA del gate pending qui sotto: quel gate fa `return` su
+  // QUALSIASI stato ≠ pending (quindi anche su 'confermato') → un ramo messo "dopo" non sarebbe mai
+  // raggiunto per i confermati. Il cutoff non-retroattivo (su t0=creazione) è già applicato sopra.
+  if (status === 'confermato') {
+    _processaCrmReminder_(ev, eventId, t0, apptStart, telefono, rec, props, nowMs, dryRun);
+  }
+
   if (status !== 'pending') {
     Logger.log('🚦 Stato "%s" (≠ pending) → funnel fermo, salto evento: %s', status, ev.getTitle());
     return;
@@ -117,8 +139,16 @@ function processaEventoFunnel_(ev, props, nowMs, dryRun, calId) {
     var stamp = CONFIG.SOGLIE[k];
     var sogliaMs = t0Ms + stamp.h * 60 * 60 * 1000;
 
+    // 🌙 v2.5.87 FEATURE A: se la soglia cade dopo le 19 (o di notte) la slitto alle 09:00 del mattino
+    // utile successivo. ESCLUSO 'ingresso' (h=0): la mail "nuovo lead entrato" deve partire subito.
+    // CRUCIALE: lo stale qui sotto si calcola sulla soglia SLITTATA (sogliaMs riassegnata), altrimenti
+    // uno stamp serale slittato sarebbe già "scaduto da >3h" la mattina dopo e verrebbe marcato senza inviare.
+    if (stamp.key !== 'ingresso') {
+      sogliaMs = _applyQuietHours_(new Date(sogliaMs)).getTime();
+    }
+
     if (nowMs < sogliaMs) continue;                         // non ancora dovuto
-    var stale = nowMs > sogliaMs + CONFIG.TOLLERANZA_MS;    // troppo in ritardo (>3h)
+    var stale = nowMs > sogliaMs + CONFIG.TOLLERANZA_MS;    // troppo in ritardo (>3h, sulla soglia slittata)
 
     // ✨ v2.5.81: all'INGRESSO (h=0) e su evento "fresco" (non stale), oltre alla mail arricchiamo
     // l'evento server-side (blocco contatti + rename titolo). UNA volta sola (flag 'enriched_…').
@@ -181,6 +211,79 @@ function buildLeadFromEvent_(ev, t0, apptStart, telefono, rec) {
     code: code,
     eventId: ev.getId()
   };
+}
+
+// ===== 🌙 v2.5.87 FEATURE A: QUIET HOURS (slittamento stamp serali/notturni) =====
+// Se `sogliaDate` cade a/oltre CONFIG.QUIET_AFTER_H (sera) o prima di CONFIG.QUIET_MORNING_H (notte),
+// ritorna una NUOVA Date alle QUIET_MORNING_H:00 del mattino "utile" successivo; altrimenti la ritorna
+// invariata. In Apps Script il fuso del runtime coincide con quello dello script (Europe/Rome, vedi
+// appsscript.json) → getHours()/setHours()/setDate() lavorano già in ora locale italiana, coerenti con
+// Session.getScriptTimeZone(); setHours gestisce anche i salti DST. Casi:
+//   - ora >= 19  → 09:00 del GIORNO SUCCESSIVO (la sera è già passata oltre il 09:00 odierno);
+//   - ora < 9    → 09:00 dello STESSO giorno (ore notturne: il mattino utile è oggi);
+//   - 9 <= ora < 19 → invariata (orario lavorativo).
+function _applyQuietHours_(sogliaDate) {
+  var afterH   = (CONFIG.QUIET_AFTER_H   != null) ? CONFIG.QUIET_AFTER_H   : 19;
+  var morningH = (CONFIG.QUIET_MORNING_H != null) ? CONFIG.QUIET_MORNING_H : 9;
+  var h = sogliaDate.getHours();
+  if (h >= afterH) {
+    var d = new Date(sogliaDate.getTime());
+    d.setDate(d.getDate() + 1);          // giorno successivo
+    d.setHours(morningH, 0, 0, 0);       // 09:00 in ora locale (script tz)
+    return d;
+  }
+  if (h < morningH) {
+    var d2 = new Date(sogliaDate.getTime());
+    d2.setHours(morningH, 0, 0, 0);      // 09:00 dello stesso giorno
+    return d2;
+  }
+  return sogliaDate;                      // orario lavorativo → invariata
+}
+
+// ===== 📝 v2.5.87 FEATURE C: REMINDER "COMPILA CRM" (+CRM_REMINDER_H dall'appuntamento, SOLO confermato) =====
+// Ramo SEPARATO dal funnel normale: soglia = apptStart + CRM_REMINDER_H, gate INVERTITO (lo chiama
+// processaEventoFunnel_ solo quando status==='confermato'). Riusa l'identica meccanica del funnel:
+// quiet-hours (Feature A), TOLLERANZA stale sulla soglia slittata, dedup persistente per
+// (notifier, eventId, 'crm2h'), e i NOTIFIERS attivi. Il cutoff non-retroattivo (su t0=creazione) è
+// già stato applicato a monte in processaEventoFunnel_. dryRun=true → non invia e non marca.
+function _processaCrmReminder_(ev, eventId, t0, apptStart, telefono, rec, props, nowMs, dryRun) {
+  if (!apptStart) return; // senza orario appuntamento non c'è un T0 per questo stamp
+  var crmH = (CONFIG.CRM_REMINDER_H != null) ? CONFIG.CRM_REMINDER_H : 2;
+  var stamp = { key: 'crm2h', h: crmH, label: 'Compila CRM (call ad Andrea)' };
+
+  var sogliaMs = apptStart.getTime() + crmH * 60 * 60 * 1000;
+  // 🌙 Feature A: anche il reminder CRM slitta se cade dopo le 19 (o di notte). Stale sulla soglia slittata.
+  sogliaMs = _applyQuietHours_(new Date(sogliaMs)).getTime();
+
+  if (nowMs < sogliaMs) return;                           // non ancora dovuto
+  var stale = nowMs > sogliaMs + CONFIG.TOLLERANZA_MS;    // troppo in ritardo (>3h)
+
+  var lead = null;
+  for (var n = 0; n < NOTIFIERS.length; n++) {
+    var notifier = NOTIFIERS[n];
+    if (!notifier.isEnabled()) continue;
+
+    var key = 'sent_' + notifier.id + '_' + eventId + '_' + stamp.key; // es. sent_email_<id>_crm2h
+    if (props.getProperty(key)) continue;                 // già inviato (questo canale)
+
+    if (stale) {
+      if (!dryRun) props.setProperty(key, String(nowMs));
+      Logger.log('⏰ [%s] reminder CRM scaduto da >3h → marco senza inviare: %s', notifier.id, ev.getTitle());
+      continue;
+    }
+
+    if (!lead) lead = buildLeadFromEvent_(ev, t0, apptStart, telefono, rec);
+
+    if (dryRun) {
+      Logger.log('🧪 [DRY-RUN] %s INVIEREBBE reminder CRM a "%s" (appuntamento %s)',
+                 notifier.id, lead.nome, FunnelNotify_fmtDataIt(apptStart));
+      continue;
+    }
+
+    var ok = notifier.send(lead, stamp);
+    props.setProperty(key, String(nowMs)); // 1 solo invio per (canale, evento, crm2h)
+    if (!ok) Logger.log('⚠️ [%s] reminder CRM send() ha ritornato false (marco comunque): %s', notifier.id, ev.getTitle());
+  }
 }
 
 // ===== ✨ v2.5.81 / 🎥 v2.5.82: ARRICCHIMENTO EVENTO server-side (contatti + titolo + Meet) =====
@@ -413,16 +516,129 @@ function pulisciVecchieChiavi_(props, nowMs) {
   }
 }
 
-// ===== SETUP — lancia A MANO una volta: crea il trigger ogni 5 minuti =====
+// ===== 📋 v2.5.87 FEATURE B: DIGEST GIORNALIERO (@08:00) =====
+// UNA mail-riepilogo con due blocchi sui lead il cui APPUNTAMENTO cade OGGI (start evento tra la
+// mezzanotte e le 23:59 locali):
+//   ✅ Confermati  → status='confermato'  ("manda il memo del giorno")
+//   ⏳ In attesa   → status='pending'      ("in attesa di conferma")
+//   (status='no' esclusi da entrambi.)
+// Niente cutoff qui: è un memo operativo su CHI ho oggi, a prescindere da quando l'evento è stato creato.
+// Se entrambi i blocchi sono vuoti NON manda nulla (niente spam a vuoto). Registrata da setup() come
+// trigger time-based @08:00 Europe/Rome.
+function dailyLeadDigest() {
+  if (!CONFIG.SHEET_ID) { Logger.log('⚠️ dailyLeadDigest: SHEET_ID non configurato → stop.'); return; }
+
+  var tz = Session.getScriptTimeZone();
+  var now = new Date();
+  var ymd = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  var dayStart = Utilities.parseDate(ymd + ' 00:00:00', tz, 'yyyy-MM-dd HH:mm:ss');
+  var dayEnd   = Utilities.parseDate(ymd + ' 23:59:59', tz, 'yyyy-MM-dd HH:mm:ss');
+
+  FunnelStore.load();
+
+  var confermati = [], pending = [], visti = {};
+  var cals = CalendarApp.getAllCalendars();
+  for (var c = 0; c < cals.length; c++) {
+    var cal = cals[c];
+    var calMatch = funnelCalMatches_(cal.getName());
+    var eventi;
+    try { eventi = cal.getEvents(dayStart, dayEnd); } catch (e) { continue; }
+
+    for (var i = 0; i < eventi.length; i++) {
+      var ev = eventi[i];
+      if (ev.isAllDayEvent()) continue;
+      var titolo = (ev.getTitle() || '').trim().toLowerCase();
+      if (!calMatch && !funnelTitleMatches_(titolo)) continue; // fuori dai calendari funnel: solo titolo esatto
+
+      var eventId = ev.getId();
+      if (visti[eventId]) continue;   // stesso evento in più calendari → conta una volta sola
+      visti[eventId] = true;
+
+      var desc = ev.getDescription() || '';
+      var telefono = estraiTelefonoFunnel_(desc);
+      var leadKey = telefono ? ('tel:' + telefono.replace(/\D/g, '')) : '';
+      var status = FunnelStore.getStatus(telefono, leadKey);
+      if (status === 'no') continue;  // esclusi
+
+      var rec = FunnelStore.getLead(telefono, leadKey);
+      var apptStart = ev.getStartTime();
+      var lead = buildLeadFromEvent_(ev, _funnelEventCreated_(ev, rec), apptStart, telefono, rec);
+      var nome = _titleCaseFunnel_(_nomePulitoFunnel_(lead.nome || '')) || (lead.nome || '(senza nome)');
+      var entry = {
+        nome: nome,
+        ora: Utilities.formatDate(apptStart, tz, 'HH:mm'),
+        oraMs: apptStart.getTime(),
+        telefono: lead.telefono || '',
+        appLink: lead.appLink || '',
+        eventLink: lead.eventLink || ''
+      };
+      if (status === 'confermato') confermati.push(entry);
+      else pending.push(entry); // 'pending' (e default per lead sconosciuti)
+    }
+  }
+
+  if (!confermati.length && !pending.length) {
+    Logger.log('ℹ️ dailyLeadDigest: nessun lead (confermato/pending) con appuntamento oggi → nessuna mail.');
+    return;
+  }
+
+  // Ordino ogni blocco per orario appuntamento crescente.
+  confermati.sort(function (a, b) { return a.oraMs - b.oraMs; });
+  pending.sort(function (a, b) { return a.oraMs - b.oraMs; });
+
+  var dataStr = Utilities.formatDate(now, tz, 'dd/MM/yyyy');
+  var oggetto = 'Riepilogo lead di oggi — ' + dataStr +
+                ' (' + confermati.length + ' confermati · ' + pending.length + ' in attesa)';
+  var corpo = _composeDigestBody_(confermati, pending, dataStr);
+
+  try {
+    MailApp.sendEmail({ to: CONFIG.NOTIFY_EMAIL, subject: oggetto, body: corpo });
+    Logger.log('📋 Digest inviato → %s (%s confermati, %s in attesa)', CONFIG.NOTIFY_EMAIL, confermati.length, pending.length);
+  } catch (e) {
+    Logger.log('❌ Digest NON inviato: %s', e);
+  }
+}
+
+// Compone il CORPO (testo semplice) della mail-digest. Funzione PURA (nessuna API): riceve due array
+// di entry { nome, ora, telefono, appLink, eventLink } e la data formattata. Stile coerente con EmailNotifier.
+function _composeDigestBody_(confermati, pending, dataStr) {
+  function blocco(titolo, arr, vuotoMsg) {
+    var out = [titolo];
+    if (!arr.length) { out.push('  ' + vuotoMsg); return out.join('\n'); }
+    for (var i = 0; i < arr.length; i++) {
+      var e = arr[i];
+      out.push('• ' + e.ora + ' — ' + e.nome + (e.telefono ? ('  📞 ' + e.telefono) : ''));
+      if (e.appLink)   out.push('    📂 Scheda: ' + e.appLink);
+      if (e.eventLink) out.push('    📅 Evento: ' + e.eventLink);
+    }
+    return out.join('\n');
+  }
+
+  var righe = [];
+  righe.push('Riepilogo lead con appuntamento oggi (' + dataStr + ').');
+  righe.push('');
+  righe.push(blocco('✅ Confermati — manda il memo del giorno:', confermati, '(nessuno)'));
+  righe.push('');
+  righe.push(blocco('⏳ In attesa di conferma:', pending, '(nessuno)'));
+  righe.push('');
+  righe.push('— TESTmess Funnel Notify');
+  return righe.join('\n');
+}
+
+// ===== SETUP — lancia A MANO una volta: crea i trigger (ogni 5' + digest @08:00) =====
 function setup() {
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === 'checkFunnelNotifications') {
+    var fn = triggers[i].getHandlerFunction();
+    // v2.5.87: pulisco sia il trigger 5' sia il nuovo digest (idempotente: rilanciare setup non duplica).
+    if (fn === 'checkFunnelNotifications' || fn === 'dailyLeadDigest') {
       ScriptApp.deleteTrigger(triggers[i]);
     }
   }
   ScriptApp.newTrigger('checkFunnelNotifications').timeBased().everyMinutes(5).create();
-  Logger.log('✅ Trigger creato: checkFunnelNotifications ogni 5 minuti.');
+  // v2.5.87 FEATURE B: digest giornaliero alle 08:00 (Europe/Rome).
+  ScriptApp.newTrigger('dailyLeadDigest').timeBased().atHour(8).everyDays(1).inTimezone('Europe/Rome').create();
+  Logger.log('✅ Trigger creati: checkFunnelNotifications (ogni 5 min) + dailyLeadDigest (@08:00).');
 }
 
 // ===== TEST (dry-run) — NESSUN invio. Mostra cosa verrebbe inviato adesso =====

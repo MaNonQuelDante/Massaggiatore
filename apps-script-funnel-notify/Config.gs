@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Config.gs
- * v1.4.0 (introdotto con TESTmess v2.5.66)
+ * v1.5.0 (introdotto con TESTmess v2.5.66)
  *
  * Notifiche automatiche legate al funnel dei lead ("LEAD - Call"). Gira come Google
  * Apps Script autonomo (browser chiuso) su trigger ogni 5 minuti. Per ora invia EMAIL;
@@ -8,6 +8,23 @@
  * scheduling e anti-duplicato.
  *
  * SEPARATO dall'Apps Script Twilio (apps-script-reminder/): quello NON si tocca.
+ *
+ * ⚠️⚠️ REDEPLOY MANUALE (v1.5.0 / TESTmess v2.5.87): dopo il commit ricopia i .gs aggiornati
+ *    nell'editor di script.google.com E RILANCIA setup() UNA VOLTA, perché v1.5.0 aggiunge un
+ *    NUOVO trigger giornaliero (dailyLeadDigest @08:00) che esiste solo dopo aver rieseguito setup().
+ *    Il trigger checkFunnelNotifications ogni 5' NON viene toccato.
+ *
+ * CHANGELOG v1.5.0 (TESTmess v2.5.87):
+ * - 🌙 FEATURE A (quiet hours): gli stamp del funnel (tranne 'ingresso') che cadono dopo le 19:00
+ *      (o di notte, < 09:00) NON partono in quel momento ma slittano alle 09:00 del mattino utile
+ *      successivo. Nuova _applyQuietHours_ in Scheduler.gs; la TOLLERANZA stale è calcolata sulla
+ *      soglia SLITTATA (altrimenti uno stamp serale slittato verrebbe marcato stale e mai inviato).
+ * - 📋 FEATURE B (digest giornaliero): nuovo trigger @08:00 dailyLeadDigest() → UNA mail con due
+ *      blocchi (✅ Confermati di oggi · ⏳ In attesa di conferma di oggi); 'no' esclusi; niente
+ *      mail se entrambi vuoti.
+ * - 📝 FEATURE C (reminder CRM): nuovo stamp 'crm2h' = apptStart + 2h che — al contrario del funnel
+ *      normale — invia SOLO se status='confermato' ("Compila CRM / call ad Andrea"). Ramo dedicato
+ *      con dedup 'sent_email_<eventId>_crm2h', stessa meccanica stale/cutoff e quiet-hours.
  *
  * CHANGELOG v1.4.0 (TESTmess v2.5.82):
  * - 🎥 Il Meet entra nell'arricchimento evento (Scheduler.gs: arricchisciEventoFunnel_ +
@@ -82,6 +99,17 @@ var CONFIG = {
     { key: 'sollecitare', h: 4, label: 'Sollecitare il lead' },
     { key: 'chiamata',    h: 6, label: 'Sollecitare via chiamata' }
   ],
+
+  // v2.5.87 FEATURE A — QUIET HOURS: uno stamp del funnel che cade a/oltre QUIET_AFTER_H (sera) o
+  // prima di QUIET_MORNING_H (notte) NON parte in quel momento ma slitta alle QUIET_MORNING_H:00 del
+  // mattino utile successivo (vedi _applyQuietHours_ in Scheduler.gs). Lo stamp 'ingresso' (h=0) è ESCLUSO
+  // (la mail "nuovo lead entrato" deve partire subito).
+  QUIET_AFTER_H:   19,   // ora (locale Europe/Rome) a partire dalla quale si slitta
+  QUIET_MORNING_H: 9,    // ora del mattino "utile" a cui si slitta
+
+  // v2.5.87 FEATURE C — REMINDER CRM: stamp dedicato 'crm2h' = orario APPUNTAMENTO + CRM_REMINDER_H.
+  // A differenza del funnel normale (solo 'pending') questo parte SOLO se status='confermato'.
+  CRM_REMINDER_H:  2,    // ore dopo l'appuntamento per il promemoria "compila CRM"
 
   // Match evento: l'evento è "del funnel" se il NOME del calendario contiene una delle CAL_MATCHES,
   // oppure se il TITOLO dell'evento è esattamente TITLE_MATCH (convenzione legacy sul titolo).
