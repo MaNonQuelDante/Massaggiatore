@@ -529,17 +529,19 @@ async function updatePreview() {
         const cognomeForm = document.getElementById('cognome').value.trim();
         const telefonoForm = document.getElementById('telefono').value.trim();
         let t0NoShow = null;
+        let descNoShow = ''; // v2.5.85: descrizione evento → da qui esce l'assistente nel msg NoShow
         try {
             const selLead = document.getElementById('selectLead');
             const optNoShow = selLead && selLead.selectedOptions && selLead.selectedOptions[0];
             if (optNoShow && optNoShow.dataset && optNoShow.dataset.eventData) {
                 const evNoShow = JSON.parse(optNoShow.dataset.eventData);
                 if (evNoShow && evNoShow.start) t0NoShow = new Date(evNoShow.start);
+                if (evNoShow && evNoShow.description) descNoShow = evNoShow.description;
             }
         } catch (e) {
             console.warn('⚠️ Gruppo NoShow: impossibile leggere l\'orario appuntamento dal lead selezionato', e);
         }
-        preview.value = buildNoShowText({ nome: nome, cognome: cognomeForm, telefono: telefonoForm }, t0NoShow);
+        preview.value = buildNoShowText({ nome: nome, cognome: cognomeForm, telefono: telefonoForm }, t0NoShow, descNoShow);
         return;
     }
 
@@ -1612,7 +1614,8 @@ function buildLeadCallIndex() {
         candidates.push({
             id: event.id || '', phone9, phoneRaw,
             firstName: parsed.firstName || '', lastName: parsed.lastName || '',
-            nameNorm, nameDisplay, t0, created: createdValid
+            nameNorm, nameDisplay, t0, created: createdValid,
+            description: event.description || ''   // v2.5.85: serve a estrarre l'assistente nel msg NoShow
         });
     });
 
@@ -1658,7 +1661,7 @@ function findLeadT0Auto(lead, candidates) {
     // v2.5.63: tiene il CANDIDATO col T0 più recente (non più solo la Date), così resta
     // disponibile il suo .created. Parità invariata: a T0 uguale vince il primo incontrato.
     const latestCand = (acc, c) => (!acc || c.t0 > acc.t0) ? c : acc;
-    const pack = (c) => c ? { t0: c.t0, created: c.created || null } : null;
+    const pack = (c) => c ? { t0: c.t0, created: c.created || null, description: c.description || '' } : null;
 
     // 1) Telefono
     if (phone9) {
@@ -1717,7 +1720,8 @@ function bestLeadSuggestion(lead, candidates, dismissed) {
     });
     if (!best) return null;
     // v2.5.63: porto anche created (stamp creazione) per datare l'ingresso in caso 'suggest'.
-    return { id: best.id, label: `${best.nameDisplay} · ${fmtLeadEventWhen(best.t0)}`, t0: best.t0, created: best.created || null };
+    // v2.5.85: porto anche la description (assistente nel msg NoShow) del candidato proposto.
+    return { id: best.id, label: `${best.nameDisplay} · ${fmtLeadEventWhen(best.t0)}`, t0: best.t0, created: best.created || null, description: best.description || '' };
 }
 
 // Risolve il T0 di un lead tenendo conto degli agganci manuali e delle proposte.
@@ -1731,20 +1735,22 @@ function bestLeadSuggestion(lead, candidates, dismissed) {
 // NB: NON scrive mai (il render non tocca il cloud). Gli agganci "stale" sono solo ignorati.
 function resolveLeadT0(lead, candidates, binding) {
     binding = binding || {};
+    // v2.5.85: `description` = descrizione dell'evento agganciato (da lì esce l'assistente nel msg
+    // NoShow). '' per 'manual' (orario a mano, nessun evento) e 'none' (nessun aggancio).
     if (binding.manualT0) {
         const d = new Date(binding.manualT0);
-        if (!isNaN(d.getTime())) return { status: 'manual', t0: d, createdAt: null, suggestion: null };
+        if (!isNaN(d.getTime())) return { status: 'manual', t0: d, createdAt: null, suggestion: null, description: '' };
     }
     if (binding.eventId) {
         const c = (candidates || []).find(x => x.id === binding.eventId);
-        if (c) return { status: 'bound', t0: c.t0, createdAt: c.created || null, suggestion: null };
+        if (c) return { status: 'bound', t0: c.t0, createdAt: c.created || null, suggestion: null, description: c.description || '' };
         // evento sparito da Calendar: ignoro l'aggancio e proseguo
     }
     const auto = findLeadT0Auto(lead, candidates);
-    if (auto) return { status: 'auto', t0: auto.t0, createdAt: auto.created || null, suggestion: null };
+    if (auto) return { status: 'auto', t0: auto.t0, createdAt: auto.created || null, suggestion: null, description: auto.description || '' };
     const sugg = bestLeadSuggestion(lead, candidates, binding.dismissed);
-    if (sugg) return { status: 'suggest', t0: null, createdAt: sugg.created || null, suggestion: sugg };
-    return { status: 'none', t0: null, createdAt: null, suggestion: null };
+    if (sugg) return { status: 'suggest', t0: null, createdAt: sugg.created || null, suggestion: sugg, description: sugg.description || '' };
+    return { status: 'none', t0: null, createdAt: null, suggestion: null, description: '' };
 }
 
 // "gg/mm hh:mm" per mostrare quando cade un evento.
@@ -1778,23 +1784,47 @@ const NOSHOW_WA_NUMBER = '393755588371';
 // v2.5.83: estratto da buildNoShowWaHref così il template "Gruppo No Show" del form (vedi
 // updatePreview) produce un testo IDENTICO al bottone NoShow della card — unica fonte di verità,
 // niente testo duplicato/inventato.
-function buildNoShowText(lead, t0) {
+// v2.5.85: l'assistente NON viene più da #operatoreName (= nome operatore loggato, cadeva
+// SEMPRE su "Dante") ma dalla DESCRIZIONE dell'evento Calendar, come fa l'Apps Script reminder
+// (estraiSetter_). Se non si trova → riga VUOTA (Dante la mette a mano), MAI "Dante". In coda
+// una riga PRE-NOSHOW (inviamo prima dell'appuntamento) / POST-NOSHOW (durante o dopo).
+
+// v2.5.85: estrae il nome dell'assistente/setter dalla descrizione dell'evento Calendar.
+// STESSO pattern + pulizia di apps-script-reminder/Codice.gs > estraiSetter_ (coerenza web↔server):
+// prende la 1ª riga dopo "setter|assistente|operatore:", taglia su a-capo/HTML e ripulisce i tag.
+// Ritorna il nome (trim) oppure '' se non c'è → riga vuota nel msg NoShow (mai un default).
+function extractAssistenteFromDescription(description) {
+    if (!description) return '';
+    const m = String(description).match(/(?:setter|assistente|operatore)\s*[:\-]\s*(.+)/i);
+    if (m) {
+        const nome = m[1].split(/[\r\n<]/)[0].replace(/<[^>]*>/g, '').trim();
+        if (nome) return nome;
+    }
+    return '';
+}
+
+function buildNoShowText(lead, t0, description) {
     const nomeCognome = (`${lead.nome || ''} ${lead.cognome || ''}`).trim();
     const appuntamento = t0 ? fmtLeadEventWhen(t0) : '';
     const telefono = lead.telefono ? formatLeadPhoneDisplay(lead.telefono) : '';
-    // nome assistente: stessa fonte dei messaggi ({OPERATORE} = elemento #operatoreName)
-    const assistente = (document.getElementById('operatoreName')?.textContent || '').trim();
-    // primo nome dell'account Google loggato (es. "Dante Davide" → "Dante")
+    // v2.5.85: assistente dalla DESCRIZIONE evento (non più #operatoreName). Assente → riga vuota.
+    const assistente = extractAssistenteFromDescription(description);
+    // primo nome dell'account Google loggato (es. "Dante Davide" → "Dante") = chi invia (il "Dante" giusto)
     const googleName = (window.userProfileData && window.userProfileData()?.name)
         || localStorage.getItem('sgmess_operator_name') || '';
     const googleFirst = (googleName.split(' ')[0] || '').trim();
-    return [nomeCognome, appuntamento, telefono, assistente, googleFirst].join('\n');
+    // v2.5.85: riga finale PRE/POST-NOSHOW in base a QUANDO inviamo vs orario appuntamento (t0):
+    // adesso < appuntamento → PRE-NOSHOW; adesso >= appuntamento → POST-NOSHOW. Senza t0 si omette.
+    const lines = [nomeCognome, appuntamento, telefono, assistente, googleFirst];
+    if (t0) lines.push(new Date() < t0 ? 'PRE-NOSHOW' : 'POST-NOSHOW');
+    return lines.join('\n');
 }
 
 // v2.5.59: href WhatsApp per inoltrare il lead al "Gruppo NoShow" (numero FISSO del gruppo).
-// encodeURIComponent sul testo prodotto da buildNoShowText.
-function buildNoShowWaHref(lead, t0) {
-    return `https://wa.me/${NOSHOW_WA_NUMBER}?text=${encodeURIComponent(buildNoShowText(lead, t0))}`;
+// encodeURIComponent sul testo prodotto da buildNoShowText. v2.5.85: inoltra anche la description
+// (da lì esce l'assistente).
+function buildNoShowWaHref(lead, t0, description) {
+    return `https://wa.me/${NOSHOW_WA_NUMBER}?text=${encodeURIComponent(buildNoShowText(lead, t0, description))}`;
 }
 
 // HTML del blocco checklist per una singola card lead. `resolution` = output di resolveLeadT0.
@@ -1817,7 +1847,7 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
     const frozenFunnel = isLeadFunnelFrozen(leadStatus);
 
     // v2.5.59: messaggio precompilato per il bottone WhatsApp della riga "noshow"
-    const noshowWaHref = buildNoShowWaHref(lead, t0);
+    const noshowWaHref = buildNoShowWaHref(lead, t0, resolution.description || '');
 
     // Righe del funnel (orari dallo stamp di creazione evento; "—" se non c'è creazione)
     let rows = '';
