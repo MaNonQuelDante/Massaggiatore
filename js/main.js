@@ -18,6 +18,7 @@ const STORAGE_KEYS = {
     LEAD_CONFIRMED: 'LEAD_CONFIRMED',           // v2.5.61 (LEGACY): flag booleano "Confermato". Tenuto solo per migrazione → LEAD_STATUS.
     LEAD_STATUS: 'LEAD_STATUS',                  // v2.5.67: stato conferma a 3 valori per lead "confermato"|"pending"|"no" (cloud/Drive)
     LEAD_CHECKLIST_TIMES: 'LEAD_CHECKLIST_TIMES', // v2.5.61: timestamp congelato 1ª spunta step funnel (cloud/Drive)
+    LEAD_CHECKLIST_BY: 'LEAD_CHECKLIST_BY',       // v2.5.86: origine congelata 1ª spunta step funnel "auto"|"manual" (cloud/Drive)
     LEAD_CODES: 'LEAD_CODES',                     // v2.5.64: mappa _key→codice ID lead (cloud/Drive)
     LEAD_CODE_COUNTER: 'LEAD_CODE_COUNTER'        // v2.5.64: counter codici lead { next: <ultimo assegnato> }
 };
@@ -1448,6 +1449,15 @@ function isLeadFunnelFrozen(status) {
 // migrazione) — i tempi vivono in questo file affiancato (LEAD_CHECKLIST_TIMES), che parte vuoto.
 let leadChecklistTimes = {};
 
+// v2.5.86: ORIGINE CONGELATA della PRIMA spunta di uno step funnel: "auto" (spuntato dal
+// programma in autoCheckFunnelStepOnSend all'invio messaggio) o "manual" (click dell'utente).
+// { "<leadKey>": { "<step>": "auto" | "manual" } }. Stessa identica disciplina dei times: si scrive
+// SOLO la prima volta che lo step diventa true, non si sovrascrive e non si cancella mai. Vive in un
+// file affiancato (LEAD_CHECKLIST_BY) che parte vuoto → zero migrazione. Serve solo a colorare la riga
+// (viola = automatico, blu = manuale). RETROCOMPAT: spunte fatte prima di questa feature non hanno
+// entry qui → trattate come "manual" (fallback) sia nel render sia nella legenda.
+let leadChecklistBy = {};
+
 // v2.5.67: filtro della sezione Lead. 'all' | 'pending' | 'confermato' | 'no'. Solo in memoria,
 // NON persistito su Drive.
 // v2.5.73: DEFAULT = 'pending'. La vista parte coi soli lead pending in chiaro; confermati e "no"
@@ -1832,6 +1842,7 @@ function buildNoShowWaHref(lead, t0, description) {
 function renderLeadChecklist(lead, resolution, leadStatus) {
     const leadKey = lead._key;
     const state = leadChecklistState[leadKey] || {};
+    const by = leadChecklistBy[leadKey] || {}; // v2.5.86: origine congelata della 1ª spunta per step
     const keyAttr = encodeURIComponent(leadKey); // sicuro come valore di data-attribute
     const t0 = resolution.t0; // orario APPUNTAMENTO (start evento) — usato solo per il msg NoShow
     const status = resolution.status;
@@ -1862,13 +1873,18 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
         // ingrigisce la checkbox e ne uccide l'accent-color blu. Guardia anche lato JS in
         // toggleLeadChecklistStep, così il blocco regge a prescindere dal CSS.
         const frozen = frozenFunnel;
+        // v2.5.86: distingue VISIVAMENTE le spunte automatiche (programma) da quelle manuali (utente).
+        // Si applica SOLO a step spuntati: 'lc-auto' se l'origine congelata in leadChecklistBy è "auto",
+        // altrimenti 'lc-manual' (origine "manual" OPPURE assente = spunta legacy pre-feature → fallback
+        // manuale, così i vecchi spunti non cambiano aspetto a sorpresa). Convive con .lead-funnel-frozen.
+        const srcClass = checked ? (by[step.key] === 'auto' ? ' lc-auto' : ' lc-manual') : '';
         let timeHtml = '';
         if (step.offsetH !== null) {
             const t = leadStepTime(funnelBase, step.offsetH); // v2.5.73: base = creazione evento, non appuntamento
             timeHtml = `<span class="lc-time">${t || '—'}</span>`;
         }
         const rowHtml = `
-                    <label class="lead-check-row${checked ? ' done' : ''}${frozen ? ' lead-funnel-frozen' : ''}">
+                    <label class="lead-check-row${checked ? ' done' : ''}${srcClass}${frozen ? ' lead-funnel-frozen' : ''}">
                         <input type="checkbox" data-lead-key="${keyAttr}" data-step="${step.key}"${checked ? ' checked' : ''}${frozen ? ' tabindex="-1"' : ''}>
                         <span class="lc-label">${step.label}</span>
                         ${timeHtml}
@@ -1923,6 +1939,10 @@ function renderLeadChecklist(lead, resolution, leadStatus) {
                         <span><i class="fas fa-list-check"></i> Funnel conferma ${tag}</span>
                         ${changeLink}
                     </div>
+                    <div class="lead-check-legend" aria-hidden="true">
+                        <span class="lc-leg lc-leg-auto"><span class="lc-dot"></span> automatico</span>
+                        <span class="lc-leg lc-leg-manual"><span class="lc-dot"></span> manuale</span>
+                    </div>
                     ${banner}
                     ${rows}
                     ${renderLeadPicker(leadKey, keyAttr)}
@@ -1961,7 +1981,9 @@ function renderLeadPicker(leadKey, keyAttr) {
 }
 
 // Toggle di una checkbox: aggiorna lo stato e lo persiste su Drive (stesso meccanismo dei dati lead).
-async function toggleLeadChecklistStep(leadKey, step, checked) {
+// v2.5.86: `source` ('manual' dal click utente, 'auto' da autoCheckFunnelStepOnSend) registra — solo
+// alla 1ª spunta, come il timestamp — l'origine in leadChecklistBy, per colorare la riga.
+async function toggleLeadChecklistStep(leadKey, step, checked, source = 'manual') {
     // v2.5.71: read-only quando il funnel è congelato (Confermato/No). La UI è già bloccata via CSS
     // (.lead-funnel-frozen → pointer-events:none) ma qui blindo anche lato logica: ignoro il toggle
     // e ri-renderizzo per ripristinare lo stato visivo. Così niente spunte fantasma a funnel chiuso.
@@ -1977,11 +1999,19 @@ async function toggleLeadChecklistStep(leadKey, step, checked) {
     // diventa true e non lo tocco mai più: se decaselio e ri-caselio (anche per sbaglio) riuso
     // l'originale, mai Date.now(). Non lo cancello sull'uncheck (resta lì per il ri-spunto).
     let timesChanged = false;
+    // v2.5.86: come il timestamp, l'origine si CONGELA alla prima spunta (scritta solo se non esiste
+    // già e mai sovrascritta/cancellata) → al ri-spunto si riusa l'originale.
+    let byChanged = false;
     if (checked) {
         if (!leadChecklistTimes[leadKey]) leadChecklistTimes[leadKey] = {};
         if (!leadChecklistTimes[leadKey][step]) {
             leadChecklistTimes[leadKey][step] = new Date().toISOString();
             timesChanged = true;
+        }
+        if (!leadChecklistBy[leadKey]) leadChecklistBy[leadKey] = {};
+        if (!leadChecklistBy[leadKey][step]) {
+            leadChecklistBy[leadKey][step] = (source === 'auto') ? 'auto' : 'manual';
+            byChanged = true;
         }
     }
 
@@ -1993,8 +2023,9 @@ async function toggleLeadChecklistStep(leadKey, step, checked) {
         try {
             await window.DriveStorage.save(STORAGE_KEYS.LEAD_CHECKLIST, leadChecklistState);
             if (timesChanged) await window.DriveStorage.save(STORAGE_KEYS.LEAD_CHECKLIST_TIMES, leadChecklistTimes);
+            if (byChanged) await window.DriveStorage.save(STORAGE_KEYS.LEAD_CHECKLIST_BY, leadChecklistBy); // v2.5.86: origine spunta
             invalidateLeadDataCache(); // v2.5.76 PERF: dati cambiati su Drive → prossima apertura rilegge fresco
-            console.log(`💾 [Lead] Checklist salvata (${leadKey} · ${step} = ${checked})`);
+            console.log(`💾 [Lead] Checklist salvata (${leadKey} · ${step} = ${checked}${byChanged ? ` · origine ${leadChecklistBy[leadKey][step]}` : ''})`);
         } catch (e) {
             console.error('❌ [Lead] Salvataggio checklist fallito:', e);
         }
@@ -2033,6 +2064,10 @@ async function autoCheckFunnelStepOnSend(tipoMessaggio, nome, cognome, telefono)
         if (savedState && typeof savedState === 'object') leadChecklistState = savedState;
         const savedTimes = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CHECKLIST_TIMES);
         if (savedTimes && typeof savedTimes === 'object') leadChecklistTimes = savedTimes;
+        // v2.5.86: rileggo anche l'origine (LEAD_CHECKLIST_BY) per lo stesso motivo dei times — il save
+        // dentro toggleLeadChecklistStep riscrive l'intero file e da Home cancellerebbe gli altri lead.
+        const savedBy = await window.DriveStorage.load(STORAGE_KEYS.LEAD_CHECKLIST_BY);
+        if (savedBy && typeof savedBy === 'object') leadChecklistBy = savedBy;
     } catch (e) {
         console.warn('⚠️ [Funnel] Rilettura checklist da Drive prima dell\'auto-spunta fallita (procedo):', e);
     }
@@ -2042,7 +2077,7 @@ async function autoCheckFunnelStepOnSend(tipoMessaggio, nome, cognome, telefono)
 
     // toggleLeadChecklistStep è no-op a funnel congelato (Confermato/No): comportamento voluto.
     try {
-        await toggleLeadChecklistStep(leadKey, step, true);
+        await toggleLeadChecklistStep(leadKey, step, true, 'auto'); // v2.5.86: origine = automatica
         console.log(`✅ [Funnel] Auto-spunta '${step}' per invio '${tipoMessaggio}' (${leadKey})`);
     } catch (e) {
         console.warn('⚠️ [Funnel] Auto-spunta fallita (ignoro):', e);
@@ -2177,7 +2212,8 @@ function ensureLeadDelegation(listContainer) {
         const leadKey = decodeURIComponent(cb.dataset.leadKey);
         // v2.5.61: toggleLeadChecklistStep ri-renderizza (aggiorna .done e il log della card);
         // non serve più il toggle manuale della classe .done qui.
-        toggleLeadChecklistStep(leadKey, cb.dataset.step, cb.checked);
+        // v2.5.86: origine = 'manual' (click utente) → riga colorata di blu, distinta dall'auto (viola).
+        toggleLeadChecklistStep(leadKey, cb.dataset.step, cb.checked, 'manual');
     });
 
     listContainer.addEventListener('click', (e) => {
@@ -2235,6 +2271,7 @@ async function loadLeadSection() {
     leadBindings = {};
     leadStatusState = {};
     leadChecklistTimes = {};
+    leadChecklistBy = {}; // v2.5.86: origine spunte (auto/manual)
     leadCodes = {};
     leadCodeCounter = 0;
 
@@ -2247,7 +2284,8 @@ async function loadLeadSection() {
             STORAGE_KEYS.LEAD_STATUS,           // 3
             STORAGE_KEYS.LEAD_CHECKLIST_TIMES,  // 4
             STORAGE_KEYS.LEAD_CODES,            // 5
-            STORAGE_KEYS.LEAD_CODE_COUNTER      // 6
+            STORAGE_KEYS.LEAD_CODE_COUNTER,     // 6
+            STORAGE_KEYS.LEAD_CHECKLIST_BY      // 7 (v2.5.86: origine spunte auto/manual)
         ];
         const results = await Promise.allSettled(KEYS.map(k => window.DriveStorage.load(k)));
         // Valore di una load andata a buon fine; se 'rejected' logga il singolo errore (come i
@@ -2310,6 +2348,9 @@ async function loadLeadSection() {
 
         const savedCounter = val(6, 'counter codici lead');
         if (savedCounter && typeof savedCounter.next === 'number') leadCodeCounter = savedCounter.next;
+
+        const savedBy = val(7, 'origine spunte lead'); // v2.5.86
+        if (savedBy && typeof savedBy === 'object') leadChecklistBy = savedBy;
     }
 
     // Fallback localStorage per la cronologia (come saveToCronologia): solo se Drive è vuoto/assente.
@@ -3055,4 +3096,4 @@ async function loadMessaggiList() {
 // ===== EXPORT FUNZIONI GLOBALI =====
 window.showNotification = showNotification;
 
-console.log('✅ Main.js v2.5.83 caricato');
+console.log('✅ Main.js v2.5.86 caricato');
