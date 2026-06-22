@@ -2032,6 +2032,16 @@ async function toggleLeadChecklistStep(leadKey, step, checked, source = 'manual'
     } else {
         console.warn('⚠️ [Lead] Non loggato: stato checklist non salvato su cloud.');
     }
+
+    // v2.5.88: rispecchia SUBITO sul foglio anche la "ultima azione" (lastStep) di questo lead, così
+    // la mail dell'Apps Script resta allineata dopo una spunta (il funnel sync NON parte da solo dopo
+    // un toggle: setLeadStatus lo fa solo al cambio stato). Riuso `lockedLead` (= il lead in sezione):
+    // se manca — es. auto-spunta dalla Home a sezione chiusa — salto, la riconciliazione avviene al
+    // prossimo syncAllLeads (apertura sezione). Fire-and-forget, no-op se foglio spento/non loggato.
+    if (lockedLead && window.FunnelSheetSync && window.FunnelSheetSync.upsertLead) {
+        try { window.FunnelSheetSync.upsertLead(buildFunnelLeadRow(lockedLead)); }
+        catch (e) { console.warn('⚠️ [Funnel] upsert foglio post-spunta fallito (ignoro):', e); }
+    }
 }
 window.toggleLeadChecklistStep = toggleLeadChecklistStep;
 
@@ -2206,17 +2216,33 @@ function ensureLeadDelegation(listContainer) {
     if (listContainer._leadDelegationAttached) return;
     listContainer._leadDelegationAttached = true;
 
-    listContainer.addEventListener('change', (e) => {
-        const cb = e.target.closest && e.target.closest('.lead-check-row input[type="checkbox"]');
-        if (!cb) return;
-        const leadKey = decodeURIComponent(cb.dataset.leadKey);
-        // v2.5.61: toggleLeadChecklistStep ri-renderizza (aggiorna .done e il log della card);
-        // non serve più il toggle manuale della classe .done qui.
-        // v2.5.86: origine = 'manual' (click utente) → riga colorata di blu, distinta dall'auto (viola).
-        toggleLeadChecklistStep(leadKey, cb.dataset.step, cb.checked, 'manual');
-    });
+    // v2.5.88 FIX 1a: il toggle del funnel checklist è ora gestito sul 'click' della RIGA (vedi sotto),
+    // NON più sul 'change' del checkbox: su mobile/desktop il 'change' a volte si perdeva (micro-drag
+    // sul checkbox o race col re-render) → la spunta non partiva. Il vecchio listener 'change' è stato
+    // RIMOSSO per non sovrapporsi al nuovo (eviterebbe il doppio-toggle).
 
     listContainer.addEventListener('click', (e) => {
+        // v2.5.88: il bottone WhatsApp "Gruppo NoShow" è un <a> FUORI dalla label (sibling): non deve
+        // mai spuntare la riga → lo lascio passare (apre il link) prima di qualsiasi altra logica.
+        if (e.target.closest && e.target.closest('.lead-noshow-wa')) return;
+
+        // v2.5.88 FIX 1a: TOGGLE ROBUSTO del funnel checklist sul click della riga. Gestisco IO lo
+        // stato: e.preventDefault() blocca il toggle NATIVO di checkbox/label → un solo cambio per
+        // click, che si clicchi il checkbox, il testo o l'orario (copre anche lo Spazio da tastiera,
+        // che emette un 'click'). Leggo input.checked PRIMA (default bloccato) → nuovoStato = !checked.
+        const row = e.target.closest && e.target.closest('.lead-check-row');
+        if (row && listContainer.contains(row)) {
+            e.preventDefault();
+            if (row.classList.contains('lead-funnel-frozen')) return; // funnel congelato → read-only
+            const input = row.querySelector('input[type="checkbox"][data-lead-key]');
+            if (!input) return;
+            const nuovoStato = !input.checked;
+            const leadKey = decodeURIComponent(input.dataset.leadKey);
+            // origine 'manual' (click utente). toggleLeadChecklistStep ri-renderizza la card.
+            toggleLeadChecklistStep(leadKey, input.dataset.step, nuovoStato, 'manual');
+            return;
+        }
+
         // v2.5.67: controllo a 3 stati (Confermato / Pending / No) nell'header della card.
         const statusBtn = e.target.closest && e.target.closest('[data-lead-status]');
         if (statusBtn && listContainer.contains(statusBtn)) {
@@ -2506,6 +2532,26 @@ async function loadLeadSection() {
 // - createdISO = v2.5.67: data di CREAZIONE dell'evento "LEAD - Call" (ingresso reale). È il T0
 //                autorevole per il funnel lato Apps Script (stamp T+2/4/6h dal createdISO).
 // - t0ISO      = orario APPUNTAMENTO (start evento), tenuto per retrocompatibilità/diagnostica.
+// v2.5.88: label leggibile dell'ULTIMO step funnel spuntato per un lead (escluso 'ingresso'),
+// per la colonna "lastStep" del mirror foglio → l'Apps Script scrive "Ultima azione verso il
+// lead: X" nella mail. Priorità dal più avanzato al meno: chiamata > sollecitare > scrivere > noshow.
+// Nessuno spuntato oltre 'ingresso' → '' (vuoto).
+const LEAD_LAST_STEP_LABELS = {
+    scrivere:    'Scrivere al lead',
+    sollecitare: 'Sollecitare il lead',
+    chiamata:    'Sollecitare via chiamata',
+    noshow:      'Inviato a Gruppo NoShow'
+};
+const LEAD_LAST_STEP_PRIORITY = ['chiamata', 'sollecitare', 'scrivere', 'noshow'];
+function computeLeadLastStep(leadKey) {
+    const state = leadChecklistState[leadKey] || {};
+    for (let i = 0; i < LEAD_LAST_STEP_PRIORITY.length; i++) {
+        const k = LEAD_LAST_STEP_PRIORITY[i];
+        if (state[k]) return LEAD_LAST_STEP_LABELS[k] || '';
+    }
+    return '';
+}
+
 function buildFunnelLeadRow(lead) {
     let t0ISO = '';
     let createdISO = '';
@@ -2521,7 +2567,8 @@ function buildFunnelLeadRow(lead) {
         codice: leadCodes[lead._key] || '',
         status: getLeadStatus(lead),
         t0ISO: t0ISO,
-        createdISO: createdISO
+        createdISO: createdISO,
+        lastStep: computeLeadLastStep(lead._key)   // v2.5.88: ultima azione verso il lead
     };
 }
 window.buildFunnelLeadRow = buildFunnelLeadRow;
@@ -3096,4 +3143,4 @@ async function loadMessaggiList() {
 // ===== EXPORT FUNZIONI GLOBALI =====
 window.showNotification = showNotification;
 
-console.log('✅ Main.js v2.5.86 caricato');
+console.log('✅ Main.js v2.5.88 caricato');
