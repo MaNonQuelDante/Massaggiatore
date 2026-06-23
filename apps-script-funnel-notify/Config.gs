@@ -1,6 +1,6 @@
 /**
  * Massaggiatore (TESTmess) — Funnel Notify — Config.gs
- * v1.5.0 (introdotto con TESTmess v2.5.66)
+ * v1.6.0 (introdotto con TESTmess v2.5.66)
  *
  * Notifiche automatiche legate al funnel dei lead ("LEAD - Call"). Gira come Google
  * Apps Script autonomo (browser chiuso) su trigger ogni 5 minuti. Per ora invia EMAIL;
@@ -13,6 +13,15 @@
  *    nell'editor di script.google.com E RILANCIA setup() UNA VOLTA, perché v1.5.0 aggiunge un
  *    NUOVO trigger giornaliero (dailyLeadDigest @08:00) che esiste solo dopo aver rieseguito setup().
  *    Il trigger checkFunnelNotifications ogni 5' NON viene toccato.
+ *
+ * CHANGELOG v1.6.0 (TESTmess v2.5.90):
+ * - 🎯 NOTIFICHE SOLO "LEAD - Call": CONFIG.CAL_MATCHES torna a contenere solo 'lead - call'
+ *      (tolto 'followup'/'follow up'/'follow-up' aggiunti in v2.5.72). Da ora il funnel e tutte
+ *      le sue mail (ingresso, scrivere, sollecitare, chiamata, digest, crm2h) si agganciano SOLO
+ *      agli eventi del calendario "LEAD - Call"; il calendario "FOLLOWUP" NON genera più notifiche.
+ *      È un cambio di SOLA configurazione (una riga): per riattivare FOLLOWUP basta rimettere le
+ *      sue voci in CAL_MATCHES. Nessun nuovo trigger → NON serve rilanciare setup(), basta ricopiare
+ *      Config.gs aggiornato nell'editor di script.google.com.
  *
  * CHANGELOG v1.5.0 (TESTmess v2.5.87):
  * - 🌙 FEATURE A (quiet hours): gli stamp del funnel (tranne 'ingresso') che cadono dopo le 19:00
@@ -113,8 +122,12 @@ var CONFIG = {
 
   // Match evento: l'evento è "del funnel" se il NOME del calendario contiene una delle CAL_MATCHES,
   // oppure se il TITOLO dell'evento è esattamente TITLE_MATCH (convenzione legacy sul titolo).
-  // v2.5.72: oltre a "LEAD - Call" rientra anche "FOLLOWUP" (i due calendari che contengono lead).
-  CAL_MATCHES: ['lead - call', 'followup', 'follow up', 'follow-up'],
+  // v2.5.72: oltre a "LEAD - Call" rientrava anche "FOLLOWUP".
+  // ⚙️ v2.5.90 — OPZIONE NOTIFICHE: Dante vuole le notifiche SOLO per i lead del calendario
+  //    "LEAD - Call". Quindi "FOLLOWUP" è stato TOLTO da CAL_MATCHES → niente più mail per quel
+  //    calendario. Questa è "l'opzione": per riattivare FOLLOWUP basta rimettere le sue voci qui,
+  //    es. ['lead - call', 'followup', 'follow up', 'follow-up']. funnelCalMatches_ legge da qui.
+  CAL_MATCHES: ['lead - call'],
   TITLE_MATCH: 'lead - call',
   // Retrocompat: log/funzioni che usano ancora CONFIG.CAL_MATCH (= prima voce di CAL_MATCHES).
   CAL_MATCH: 'lead - call',
