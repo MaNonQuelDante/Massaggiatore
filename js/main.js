@@ -425,7 +425,7 @@ function getSocietaValue() {
     const select = document.getElementById('societaSelect');
     const custom = document.getElementById('societaCustom');
     
-    if (!select) return 'SG - Lead'; // Fallback
+    if (!select) return 'AL - Lead'; // Fallback (v2.5.91: default Alessandro Lazzari)
     
     if (select.value === 'Altro' && custom && custom.value.trim()) {
         return custom.value.trim();

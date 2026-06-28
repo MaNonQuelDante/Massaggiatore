@@ -1233,7 +1233,14 @@ function extractServiceFromEvent(event) {
         console.log('   ✅ Trovato SERVIZIO in description:', servizioText);
         
         // Mapping servizio → società
-        if (servizioText.includes('stock gain') || servizioText.includes('sg')) {
+        // v2.5.91: Alessandro Lazzari → "AL - Lead". Controllato per primo (keyword distinte:
+        // 'alessandro'/'lazzari' o codice esatto 'al').
+        if (servizioText.includes('alessandro') || servizioText.includes('lazzari') || servizioText === 'al') {
+            return {
+                servizio: 'Alessandro Lazzari',
+                societa: 'AL - Lead'
+            };
+        } else if (servizioText.includes('stock gain') || servizioText.includes('sg')) {
             return {
                 servizio: 'Stock Gain',
                 societa: 'SG - Lead'
@@ -1248,9 +1255,21 @@ function extractServiceFromEvent(event) {
     
     // PRIORITÀ 2: Inferisci da nome calendario
     const calendarLower = calendarName.toLowerCase();
-    
+
+    // v2.5.91: Pattern Alessandro Lazzari (controllato per primo)
+    if (calendarLower.includes('alessandro') ||
+        calendarLower.includes('lazzari') ||
+        calendarLower.includes('al -') ||
+        calendarLower.includes('al lead')) {
+        console.log('   ✅ Rilevato AL da calendario:', calendarName);
+        return {
+            servizio: 'Alessandro Lazzari',
+            societa: 'AL - Lead'
+        };
+    }
+
     // Pattern Finanza Efficace
-    if (calendarLower.includes('fe -') || 
+    if (calendarLower.includes('fe -') ||
         calendarLower.includes('finanza efficace') ||
         calendarLower.includes('fe lead')) {
         console.log('   ✅ Rilevato FE da calendario:', calendarName);
@@ -1274,12 +1293,13 @@ function extractServiceFromEvent(event) {
         };
     }
     
-    // Default: Finanza Efficace (v2.5.43: se l'evento non specifica il servizio
-    // e il calendario non è riconosciuto, resta Finanza Efficace / FE - Lead)
-    console.log('   ⚠️ Calendario non riconosciuto, default a Finanza Efficace');
+    // Default: Alessandro Lazzari (v2.5.91: se l'evento non specifica il servizio
+    // e il calendario non è riconosciuto, default a Alessandro Lazzari / AL - Lead.
+    // Prima — v2.5.43 — il default era Finanza Efficace / FE - Lead.)
+    console.log('   ⚠️ Calendario non riconosciuto, default a Alessandro Lazzari');
     return {
-        servizio: 'Finanza Efficace',
-        societa: 'FE - Lead'
+        servizio: 'Alessandro Lazzari',
+        societa: 'AL - Lead'
     };
 }
 

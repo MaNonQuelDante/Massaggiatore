@@ -164,14 +164,18 @@ function updateSocietaFieldVisibility() {
 }
 window.updateSocietaFieldVisibility = updateSocietaFieldVisibility;
 
-// ===== v2.5.58: DERIVA "FE - Lead" / "SG - Lead" DAL TIPO LEAD =====
-// Accetta 'FE'/'SG' (dal selettore) oppure il valore servizio ('Finanza Efficace'/'Stock Gain').
+// ===== v2.5.58: DERIVA "FE - Lead" / "SG - Lead" / "AL - Lead" DAL TIPO LEAD =====
+// Accetta 'FE'/'SG'/'AL' (dal selettore) oppure il valore servizio
+// ('Finanza Efficace'/'Stock Gain'/'Alessandro Lazzari').
 function societaFromTipoLead(tipo) {
     const t = (tipo || '').toString().toUpperCase();
     if (t.includes('ALTRO')) return ''; // v2.5.65: "Altro" → società libera (la decide il chiamante)
+    // v2.5.91: Alessandro Lazzari → "AL - Lead". Controllato PRIMA di FE/SG, ma DOPO "ALTRO"
+    // (che contiene "AL"). Matcho 'ALESSANDRO'/'LAZZARI' (valore servizio) e il codice esatto 'AL'.
+    if (t === 'AL' || t.includes('ALESSANDRO') || t.includes('LAZZARI')) return 'AL - Lead';
     if (t.includes('FE') || t.includes('FINANZA')) return 'FE - Lead';
     if (t.includes('SG') || t.includes('STOCK')) return 'SG - Lead';
-    return 'SG - Lead'; // fallback storico
+    return 'AL - Lead'; // v2.5.91: fallback = default Alessandro Lazzari (era SG - Lead)
 }
 window.societaFromTipoLead = societaFromTipoLead;
 
